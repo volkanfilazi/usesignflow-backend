@@ -1,7 +1,8 @@
-using System.Text;
+using DynamicFormBuilder.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -25,7 +26,7 @@ builder.Services.AddSingleton<IMongoDatabase>(sp =>
 
 builder.Services.AddSingleton<DynamicFormBuilder.Services.FormRepository>();
 builder.Services.AddSingleton<DynamicFormBuilder.Services.AuthRepository>();
-
+builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAngular",

@@ -26,5 +26,10 @@ namespace DynamicFormBuilder.Services
         {
             await _users.InsertOneAsync(user);
         }
+
+        public async Task UpdateAsync(AuthDefinition user)
+        {
+            await _users.ReplaceOneAsync(x => x.Id == user.Id, user);
+        }
     }
 }
