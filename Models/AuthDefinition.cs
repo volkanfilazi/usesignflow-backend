@@ -1,8 +1,6 @@
 ﻿using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
-namespace DynamicFormBuilder.Models;
-
 public class AuthDefinition
 {
     [BsonId]
@@ -10,7 +8,10 @@ public class AuthDefinition
     public string? Id { get; set; }
 
     public string Email { get; set; } = string.Empty;
-    public string PasswordHash { get; set; } = string.Empty;
     public string FullName { get; set; } = string.Empty;
-    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+    public string PasswordHash { get; set; } = string.Empty;
+
+    public bool EmailVerified { get; set; } = false;
+    public string? EmailVerificationToken { get; set; }
+    public DateTime? EmailVerificationTokenExpiresAtUtc { get; set; }
 }

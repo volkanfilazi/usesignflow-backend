@@ -1,10 +1,11 @@
 ﻿using DynamicFormBuilder.Models;
 using DynamicFormBuilder.Services;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
-using System.Text;
-using System.IdentityModel.Tokens.Jwt;
 using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 
 [ApiController]
 [Route("api/auth")]
@@ -12,15 +13,20 @@ public class AuthController : ControllerBase
 {
     private readonly AuthRepository _repo;
     private readonly IConfiguration _configuration;
+    private readonly IEmailService _emailService;
 
-    public AuthController(AuthRepository repo, IConfiguration configuration)
+    public AuthController(
+        AuthRepository repo,
+        IConfiguration configuration,
+        IEmailService emailService)
     {
         _repo = repo;
         _configuration = configuration;
+        _emailService = emailService;
     }
 
     [HttpPost("register")]
-    public async Task<ActionResult<AuthResponse>> Register([FromBody] RegisterUserRequest request)
+    public async Task<ActionResult> Register([FromBody] RegisterUserRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Email))
             return BadRequest("Email is required.");
@@ -28,26 +34,50 @@ public class AuthController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Password))
             return BadRequest("Password is required.");
 
-        var existingUser = await _repo.GetByEmailAsync(request.Email.Trim().ToLowerInvariant());
+        var email = request.Email.Trim().ToLowerInvariant();
+
+        var existingUser = await _repo.GetByEmailAsync(email);
         if (existingUser != null)
             return BadRequest("Email is already registered.");
 
+        var verifyToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
+
         var user = new AuthDefinition
         {
-            Email = request.Email.Trim().ToLowerInvariant(),
+            Email = email,
             FullName = request.FullName?.Trim() ?? string.Empty,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password)
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+            EmailVerified = false,
+            EmailVerificationToken = verifyToken,
+            EmailVerificationTokenExpiresAtUtc = DateTime.UtcNow.AddHours(24)
         };
 
         await _repo.CreateAsync(user);
+        var apiBaseUrl = _configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
 
-        var token = GenerateJwtToken(user);
+        if (string.IsNullOrWhiteSpace(apiBaseUrl))
+            throw new InvalidOperationException("App:FrontendBaseUrl is missing.");
+        var verifyUrl =
+    $"{_configuration["App:FrontendBaseUrl"]}/verification-process?token={Uri.EscapeDataString(verifyToken)}&email={Uri.EscapeDataString(user.Email)}";
 
-        return Ok(new AuthResponse
+        try
         {
-            Token = token,
-            Email = user.Email,
-            FullName = user.FullName
+            await _emailService.SendVerificationEmailAsync(user.Email, verifyUrl, user.FullName);
+        }
+        catch (Exception ex)
+        {
+            // logla
+            Console.WriteLine(ex.Message);
+
+            return StatusCode(500, new
+            {
+                message = "User created, but verification email could not be sent."
+            });
+        }
+
+        return Ok(new
+        {
+            message = "Registration successful. Please verify your email address."
         });
     }
 
@@ -66,6 +96,12 @@ public class AuthController : ControllerBase
         if (!validPassword)
             return Unauthorized("Invalid credentials.");
 
+        if (!user.EmailVerified)
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                message = "Please verify your email before logging in."
+            });
+
         var token = GenerateJwtToken(user);
 
         return Ok(new AuthResponse
@@ -74,6 +110,35 @@ public class AuthController : ControllerBase
             Email = user.Email,
             FullName = user.FullName
         });
+    }
+
+    [HttpGet("verify-email")]
+    public async Task<ActionResult> VerifyEmail([FromQuery] string email, [FromQuery] string token)
+    {
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(token))
+            return BadRequest("Invalid verification request.");
+
+        var user = await _repo.GetByEmailAsync(email.Trim().ToLowerInvariant());
+        if (user == null)
+            return BadRequest("User not found.");
+
+        if (user.EmailVerified)
+            return Ok(new { message = "Email is already verified." });
+
+        if (user.EmailVerificationToken != token)
+            return BadRequest("Invalid verification token.");
+
+        if (user.EmailVerificationTokenExpiresAtUtc == null ||
+            user.EmailVerificationTokenExpiresAtUtc < DateTime.UtcNow)
+            return BadRequest("Verification token has expired.");
+
+        user.EmailVerified = true;
+        user.EmailVerificationToken = null;
+        user.EmailVerificationTokenExpiresAtUtc = null;
+
+        await _repo.UpdateAsync(user);
+
+        return Ok(new { message = "Email verified successfully." });
     }
 
     private string GenerateJwtToken(AuthDefinition user)
