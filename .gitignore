@@ -15,3 +15,8 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+
+publish/
+*.exe
+*.dll
+*.pdb
