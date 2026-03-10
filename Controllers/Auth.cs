@@ -15,15 +15,18 @@ public class AuthController : ControllerBase
     private readonly AuthRepository _repo;
     private readonly IConfiguration _configuration;
     private readonly IEmailService _emailService;
+    private readonly JwtService _jwtService;
 
     public AuthController(
         AuthRepository repo,
         IConfiguration configuration,
-        IEmailService emailService)
+        IEmailService emailService,
+        JwtService jwtService)
     {
         _repo = repo;
         _configuration = configuration;
         _emailService = emailService;
+        _jwtService = jwtService;
     }
 
     [EnableRateLimiting("auth-strict")]
@@ -79,7 +82,7 @@ public class AuthController : ControllerBase
         }
     };
 
-        var rawVerifyToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
+        var rawVerifyToken = TokenHelper.GenerateSecureToken();
         var verifyTokenHash = TokenHelper.ComputeSha256(rawVerifyToken);
 
         var user = new AuthDefinition
@@ -145,11 +148,30 @@ public class AuthController : ControllerBase
                 message = "Please verify your email before logging in."
             });
 
-        var token = GenerateJwtToken(user);
+        var accessToken = _jwtService.GenerateAccessToken(user);
+        var accessTokenExpiresAtUtc = DateTime.UtcNow.AddMinutes(30);
 
+        var rawRefreshToken = TokenHelper.GenerateSecureToken();
+        var refreshTokenHash = TokenHelper.ComputeSha256(rawRefreshToken);
+
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+
+        var refreshToken = new RefreshTokenDefinition
+        {
+            TokenHash = refreshTokenHash,
+            CreatedAtUtc = DateTime.UtcNow,
+            ExpiresAtUtc = DateTime.UtcNow.AddDays(7),
+            CreatedByIp = ipAddress
+        };
+
+        user.RefreshTokens.Add(refreshToken);
+        await _repo.UpdateAsync(user);
         return Ok(new AuthResponse
         {
-            Token = token,
+            Token = accessToken,
+            TokenExpiresAtUtc = accessTokenExpiresAtUtc,
+            RefreshToken = rawRefreshToken,
+            RefreshTokenExpiresAtUtc = refreshToken.ExpiresAtUtc,
             Email = user.Email,
             FullName = user.FullName
         });
@@ -161,19 +183,23 @@ public class AuthController : ControllerBase
         if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(token))
             return BadRequest("Invalid verification request.");
 
-        var user = await _repo.GetByEmailAsync(email.Trim().ToLowerInvariant());
+        var normalizedEmail = email.Trim().ToLowerInvariant();
+        var user = await _repo.GetByEmailAsync(normalizedEmail);
+
         if (user == null)
             return BadRequest("User not found.");
 
         if (user.EmailVerified)
             return Ok(new { message = "Email is already verified." });
 
-        if (user.EmailVerificationTokenHash != token)
-            return BadRequest("Invalid verification token.");
-
         if (user.EmailVerificationTokenExpiresAtUtc == null ||
             user.EmailVerificationTokenExpiresAtUtc < DateTime.UtcNow)
             return BadRequest("Verification token has expired.");
+
+        var incomingTokenHash = TokenHelper.ComputeSha256(token);
+
+        if (!string.Equals(user.EmailVerificationTokenHash, incomingTokenHash, StringComparison.OrdinalIgnoreCase))
+            return BadRequest("Invalid verification token.");
 
         user.EmailVerified = true;
         user.EmailVerificationTokenHash = null;
