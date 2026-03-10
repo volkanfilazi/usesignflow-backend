@@ -10,6 +10,7 @@ public class FormDefinition
     public string FormName { get; set; } = null!;
     public bool Expanded { get; set; } = false;
     public string Version { get; set; } = null!;
+    public DateTime CreatedAtUtc { get; set; }
 
     public List<FieldDefinition> Fields { get; set; } = new();
 }

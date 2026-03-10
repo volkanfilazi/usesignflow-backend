@@ -13,6 +13,13 @@ namespace DynamicFormBuilder.Services
             _forms = db.GetCollection<FormDefinition>("forms");
         }
 
+        public async Task<List<FormDefinition>> GetByUserIdAsync(string userId)
+        {
+            return await _forms
+                .Find(x => x.OwnerUserId == userId)
+                .ToListAsync();
+        }
+
         public Task<List<FormDefinition>> GetAllAsync() =>
             _forms.Find(_ => true).ToListAsync();
 

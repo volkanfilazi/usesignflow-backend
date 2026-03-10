@@ -1,5 +1,7 @@
 ﻿using DynamicFormBuilder.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace FormBuilderApi.Controllers;
 
@@ -11,9 +13,17 @@ public class FormsController : ControllerBase
 
     public FormsController(FormRepository repo) => _repo = repo;
 
-    [HttpGet]
-    public async Task<ActionResult<List<FormDefinition>>> GetAll()
-        => Ok(await _repo.GetAllAsync());
+    [Authorize]
+    [HttpGet("mine")]
+    public async Task<ActionResult<List<FormDefinition>>> GetMine()
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized();
+
+        var forms = await _repo.GetByUserIdAsync(userId);
+        return Ok(forms);
+    }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<FormDefinition>> GetById(string id)
@@ -50,8 +60,14 @@ public class FormsController : ControllerBase
             }
         }
 
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized();
+
         // Let Mongo create Id
         form.Id = null;
+        form.OwnerUserId = userId;
+        form.CreatedAtUtc = DateTime.UtcNow;
 
         await _repo.CreateAsync(form);
         return CreatedAtAction(nameof(GetById), new { id = form.Id }, form);

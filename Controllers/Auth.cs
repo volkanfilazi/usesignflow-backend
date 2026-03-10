@@ -1,6 +1,7 @@
 ﻿using DynamicFormBuilder.Models;
 using DynamicFormBuilder.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -25,8 +26,12 @@ public class AuthController : ControllerBase
         _emailService = emailService;
     }
 
+    [EnableRateLimiting("auth-strict")]
     [HttpPost("register")]
-    public async Task<ActionResult> Register([FromBody] RegisterUserRequest request)
+    public async Task<ActionResult> Register(
+    [FromBody] RegisterUserRequest request,
+    [FromServices] ILegalDocumentService legalDocumentService
+)
     {
         if (string.IsNullOrWhiteSpace(request.Email))
             return BadRequest("Email is required.");
@@ -34,39 +39,76 @@ public class AuthController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Password))
             return BadRequest("Password is required.");
 
+        if (string.IsNullOrWhiteSpace(request.FullName))
+            return BadRequest("Full name is required.");
+
+        if (!request.TermsAccepted || !request.PrivacyAccepted)
+            return BadRequest("Terms and Privacy Policy must be accepted.");
+
         var email = request.Email.Trim().ToLowerInvariant();
 
         var existingUser = await _repo.GetByEmailAsync(email);
         if (existingUser != null)
             return BadRequest("Email is already registered.");
 
-        var verifyToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
+        var terms = legalDocumentService.GetCurrentTerms();
+        var privacy = legalDocumentService.GetCurrentPrivacy();
+
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = Request.Headers["User-Agent"].ToString();
+
+        var acceptances = new List<LegalAcceptance>
+    {
+        new LegalAcceptance
+        {
+            Type = terms.Type,
+            Version = terms.Version,
+            Hash = terms.Hash,
+            AcceptedAtUtc = DateTime.UtcNow,
+            IpAddress = ipAddress,
+            UserAgent = userAgent
+        },
+        new LegalAcceptance
+        {
+            Type = privacy.Type,
+            Version = privacy.Version,
+            Hash = privacy.Hash,
+            AcceptedAtUtc = DateTime.UtcNow,
+            IpAddress = ipAddress,
+            UserAgent = userAgent
+        }
+    };
+
+        var rawVerifyToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
+        var verifyTokenHash = TokenHelper.ComputeSha256(rawVerifyToken);
 
         var user = new AuthDefinition
         {
             Email = email,
-            FullName = request.FullName?.Trim() ?? string.Empty,
+            FullName = request.FullName.Trim(),
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
             EmailVerified = false,
-            EmailVerificationToken = verifyToken,
-            EmailVerificationTokenExpiresAtUtc = DateTime.UtcNow.AddHours(24)
+            EmailVerificationTokenHash = verifyTokenHash,
+            EmailVerificationTokenExpiresAtUtc = DateTime.UtcNow.AddHours(24),
+            LegalAcceptances = acceptances
         };
 
         await _repo.CreateAsync(user);
-        var apiBaseUrl = _configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
 
-        if (string.IsNullOrWhiteSpace(apiBaseUrl))
+        var frontendBaseUrl = _configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
+
+        if (string.IsNullOrWhiteSpace(frontendBaseUrl))
             throw new InvalidOperationException("App:FrontendBaseUrl is missing.");
-        var verifyUrl =
-    $"{_configuration["App:FrontendBaseUrl"]}/verification-process?token={Uri.EscapeDataString(verifyToken)}&email={Uri.EscapeDataString(user.Email)}";
 
+        var verifyUrl =
+            $"{frontendBaseUrl}/verification-process?token={Uri.EscapeDataString(rawVerifyToken)}&email={Uri.EscapeDataString(user.Email)}";
+        
         try
         {
             await _emailService.SendVerificationEmailAsync(user.Email, verifyUrl, user.FullName);
         }
         catch (Exception ex)
         {
-            // logla
             Console.WriteLine(ex.Message);
 
             return StatusCode(500, new
@@ -81,6 +123,7 @@ public class AuthController : ControllerBase
         });
     }
 
+    [EnableRateLimiting("auth-strict")]
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponse>> Login([FromBody] LoginUserRequest request)
     {
@@ -125,7 +168,7 @@ public class AuthController : ControllerBase
         if (user.EmailVerified)
             return Ok(new { message = "Email is already verified." });
 
-        if (user.EmailVerificationToken != token)
+        if (user.EmailVerificationTokenHash != token)
             return BadRequest("Invalid verification token.");
 
         if (user.EmailVerificationTokenExpiresAtUtc == null ||
@@ -133,12 +176,52 @@ public class AuthController : ControllerBase
             return BadRequest("Verification token has expired.");
 
         user.EmailVerified = true;
-        user.EmailVerificationToken = null;
+        user.EmailVerificationTokenHash = null;
         user.EmailVerificationTokenExpiresAtUtc = null;
 
         await _repo.UpdateAsync(user);
 
         return Ok(new { message = "Email verified successfully." });
+    }
+
+    [EnableRateLimiting("auth-strict")]
+    [HttpPost("resend-verification")]
+    public async Task<ActionResult> ResendVerificationEmail([FromBody] ResendVerificationRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Email))
+            return BadRequest("Email is required.");
+
+        var email = request.Email.Trim().ToLowerInvariant();
+        var user = await _repo.GetByEmailAsync(email);
+
+        if (user == null)
+            return Ok(new { message = "If the account exists and is not verified, a new verification email has been sent." });
+
+        if (user.EmailVerified)
+            return Ok(new { message = "Email is already verified." });
+
+        var rawVerifyToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
+        var verifyTokenHash = TokenHelper.ComputeSha256(rawVerifyToken);
+
+        user.EmailVerificationTokenHash = verifyTokenHash;
+        user.EmailVerificationTokenExpiresAtUtc = DateTime.UtcNow.AddHours(24);
+
+        await _repo.UpdateAsync(user);
+
+        var frontendBaseUrl = _configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
+
+        if (string.IsNullOrWhiteSpace(frontendBaseUrl))
+            throw new InvalidOperationException("App:FrontendBaseUrl is missing.");
+
+        var verifyUrl =
+            $"{frontendBaseUrl}/verification-process?token={Uri.EscapeDataString(rawVerifyToken)}&email={Uri.EscapeDataString(user.Email)}";
+
+        await _emailService.SendVerificationEmailAsync(user.Email, verifyUrl, user.FullName);
+
+        return Ok(new
+        {
+            message = "If the account exists and is not verified, a new verification email has been sent."
+        });
     }
 
     private string GenerateJwtToken(AuthDefinition user)
