@@ -72,10 +72,12 @@ builder.Services.AddSingleton<IMongoDatabase>(sp =>
     return client.GetDatabase(databaseName);
 });
 
-builder.Services.AddSingleton<FormRepository>();
 builder.Services.AddSingleton<AuthRepository>();
+builder.Services.AddSingleton<JwtService>();
+builder.Services.AddSingleton<FormRepository>();
 builder.Services.AddScoped<ILegalDocumentService, LegalDocumentService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
+
 
 builder.Services.AddCors(options =>
 {
@@ -119,19 +121,22 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
-builder.Services.AddAuthorization();
-
 var app = builder.Build();
 
 app.UseForwardedHeaders();
-app.UseHttpsRedirection();
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
+app.UseRouting();
 
 if (app.Environment.IsDevelopment())
 {
     app.UseCors("DevCors");
 }
 
-app.UseRouting();
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();

@@ -16,4 +16,5 @@ public class AuthDefinition
     public string? EmailVerificationTokenHash { get; set; }
     public DateTime? EmailVerificationTokenExpiresAtUtc { get; set; }
     public List<LegalAcceptance> LegalAcceptances { get; set; } = new();
+    public List<RefreshTokenDefinition> RefreshTokens { get; set; } = new();
 }
