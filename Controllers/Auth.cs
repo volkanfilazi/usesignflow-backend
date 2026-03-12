@@ -33,97 +33,111 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     public async Task<ActionResult> Register(
     [FromBody] RegisterUserRequest request,
-    [FromServices] ILegalDocumentService legalDocumentService
-)
+    [FromServices] ILegalDocumentService legalDocumentService)
     {
-        if (string.IsNullOrWhiteSpace(request.Email))
-            return BadRequest("Email is required.");
-
-        if (string.IsNullOrWhiteSpace(request.Password))
-            return BadRequest("Password is required.");
-
-        if (string.IsNullOrWhiteSpace(request.FullName))
-            return BadRequest("Full name is required.");
-
-        if (!request.TermsAccepted || !request.PrivacyAccepted)
-            return BadRequest("Terms and Privacy Policy must be accepted.");
-
-        var email = request.Email.Trim().ToLowerInvariant();
-
-        var existingUser = await _repo.GetByEmailAsync(email);
-        if (existingUser != null)
-            return BadRequest("Email is already registered.");
-
-        var terms = legalDocumentService.GetCurrentTerms();
-        var privacy = legalDocumentService.GetCurrentPrivacy();
-
-        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
-        var userAgent = Request.Headers["User-Agent"].ToString();
-
-        var acceptances = new List<LegalAcceptance>
-    {
-        new LegalAcceptance
-        {
-            Type = terms.Type,
-            Version = terms.Version,
-            Hash = terms.Hash,
-            AcceptedAtUtc = DateTime.UtcNow,
-            IpAddress = ipAddress,
-            UserAgent = userAgent
-        },
-        new LegalAcceptance
-        {
-            Type = privacy.Type,
-            Version = privacy.Version,
-            Hash = privacy.Hash,
-            AcceptedAtUtc = DateTime.UtcNow,
-            IpAddress = ipAddress,
-            UserAgent = userAgent
-        }
-    };
-
-        var rawVerifyToken = TokenHelper.GenerateSecureToken();
-        var verifyTokenHash = TokenHelper.ComputeSha256(rawVerifyToken);
-
-        var user = new AuthDefinition
-        {
-            Email = email,
-            FullName = request.FullName.Trim(),
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
-            EmailVerified = false,
-            EmailVerificationTokenHash = verifyTokenHash,
-            EmailVerificationTokenExpiresAtUtc = DateTime.UtcNow.AddHours(24),
-            LegalAcceptances = acceptances
-        };
-
-        await _repo.CreateAsync(user);
-
-        var frontendBaseUrl = _configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
-
-        if (string.IsNullOrWhiteSpace(frontendBaseUrl))
-            throw new InvalidOperationException("App:FrontendBaseUrl is missing.");
-
-        var verifyUrl =
-            $"{frontendBaseUrl}/verification-process?token={Uri.EscapeDataString(rawVerifyToken)}&email={Uri.EscapeDataString(user.Email)}";
-        
         try
         {
+            Console.WriteLine("REGISTER 1");
+
+            if (string.IsNullOrWhiteSpace(request.Email))
+                return BadRequest("Email is required.");
+
+            if (string.IsNullOrWhiteSpace(request.Password))
+                return BadRequest("Password is required.");
+
+            if (string.IsNullOrWhiteSpace(request.FullName))
+                return BadRequest("Full name is required.");
+
+            if (!request.TermsAccepted || !request.PrivacyAccepted)
+                return BadRequest("Terms and Privacy Policy must be accepted.");
+
+            Console.WriteLine("REGISTER 2");
+
+            var email = request.Email.Trim().ToLowerInvariant();
+
+            var existingUser = await _repo.GetByEmailAsync(email);
+            Console.WriteLine("REGISTER 3");
+
+            if (existingUser != null)
+                return BadRequest("Email is already registered.");
+
+            var terms = legalDocumentService.GetCurrentTerms();
+            Console.WriteLine("REGISTER 4");
+
+            var privacy = legalDocumentService.GetCurrentPrivacy();
+            Console.WriteLine("REGISTER 5");
+
+            var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+            var userAgent = Request.Headers["User-Agent"].ToString();
+
+            var acceptances = new List<LegalAcceptance>
+        {
+            new LegalAcceptance
+            {
+                Type = terms.Type,
+                Version = terms.Version,
+                Hash = terms.Hash,
+                AcceptedAtUtc = DateTime.UtcNow,
+                IpAddress = ipAddress,
+                UserAgent = userAgent
+            },
+            new LegalAcceptance
+            {
+                Type = privacy.Type,
+                Version = privacy.Version,
+                Hash = privacy.Hash,
+                AcceptedAtUtc = DateTime.UtcNow,
+                IpAddress = ipAddress,
+                UserAgent = userAgent
+            }
+        };
+
+            var rawVerifyToken = TokenHelper.GenerateSecureToken();
+            var verifyTokenHash = TokenHelper.ComputeSha256(rawVerifyToken);
+
+            var user = new AuthDefinition
+            {
+                Email = email,
+                FullName = request.FullName.Trim(),
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+                EmailVerified = false,
+                EmailVerificationTokenHash = verifyTokenHash,
+                EmailVerificationTokenExpiresAtUtc = DateTime.UtcNow.AddHours(24),
+                LegalAcceptances = acceptances
+            };
+
+            Console.WriteLine("REGISTER 6 BEFORE CREATE");
+
+            await _repo.CreateAsync(user);
+
+            Console.WriteLine("REGISTER 7 AFTER CREATE");
+
+            var frontendBaseUrl = _configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
+
+            if (string.IsNullOrWhiteSpace(frontendBaseUrl))
+                throw new InvalidOperationException("App:FrontendBaseUrl is missing.");
+
+            var verifyUrl =
+                $"{frontendBaseUrl}/verification-process?token={Uri.EscapeDataString(rawVerifyToken)}&email={Uri.EscapeDataString(user.Email)}";
+
             await _emailService.SendVerificationEmailAsync(user.Email, verifyUrl, user.FullName);
+
+            Console.WriteLine("REGISTER 8 AFTER EMAIL");
+
+            return Ok(new
+            {
+                message = "Registration successful. Please verify your email address."
+            });
         }
         catch (Exception ex)
         {
-            Console.WriteLine(ex.Message);
-
+            Console.WriteLine("REGISTER ERROR: " + ex);
             return StatusCode(500, new
             {
-                message = "User created, but verification email could not be sent."
+                message = ex.Message,
+                detail = ex.ToString()
             });
         }
-
-        return Ok(new
-        {
-            message = "Registration successful. Please verify your email address."
-        });
     }
 
     [EnableRateLimiting("auth-strict")]

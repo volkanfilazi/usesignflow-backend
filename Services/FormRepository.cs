@@ -8,8 +8,8 @@ namespace DynamicFormBuilder.Services
 
         public FormRepository(IConfiguration cfg)
         {
-            var client = new MongoClient(cfg["MongoDbSettings:ConnectionString"]);
-            var db = client.GetDatabase(cfg["MongoDbSettings:DatabaseName"]);
+            var client = new MongoClient(cfg["MongoDb:ConnectionString"]);
+            var db = client.GetDatabase(cfg["MongoDb:DatabaseName"]);
             _forms = db.GetCollection<FormDefinition>("forms");
         }
 
