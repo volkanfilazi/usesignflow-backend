@@ -2,6 +2,7 @@ using DynamicFormBuilder.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
+using Microsoft.Extensions.FileProviders;
 using System.Text;
 using Microsoft.AspNetCore.HttpOverrides;
 using System.Threading.RateLimiting;
@@ -75,17 +76,21 @@ builder.Services.AddSingleton<IMongoDatabase>(sp =>
 builder.Services.AddSingleton<AuthRepository>();
 builder.Services.AddSingleton<JwtService>();
 builder.Services.AddSingleton<FormRepository>();
+builder.Services.AddScoped<FormSubmissionRepository>();
+builder.Services.AddScoped<SignatureRequestRepository>();
 builder.Services.AddScoped<ILegalDocumentService, LegalDocumentService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 
 
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("DevCors", policy =>
+    options.AddPolicy("AppCors", policy =>
     {
         policy.WithOrigins(
                 "http://localhost:4200",
-                "https://localhost:4200")
+                "https://localhost:4200",
+                "https://usesignflow.com",
+                "https://www.usesignflow.com")
               .AllowAnyHeader()
               .AllowAnyMethod();
     });
@@ -131,16 +136,19 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseRouting();
-
-if (app.Environment.IsDevelopment())
-{
-    app.UseCors("DevCors");
-}
-
+app.UseCors("AppCors");
 app.UseRateLimiter();
+
+var uploadsPath = "/var/www/uploads";
+Directory.CreateDirectory(uploadsPath);
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(uploadsPath),
+    RequestPath = "/uploads"
+});
+
 app.UseAuthentication();
 app.UseAuthorization();
-
 app.MapControllers();
-
 app.Run();

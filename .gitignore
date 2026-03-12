@@ -2,6 +2,8 @@
 .vs/
 bin/
 obj/
+publish/
+wwwroot/uploads/
 
 # Rider
 .idea/

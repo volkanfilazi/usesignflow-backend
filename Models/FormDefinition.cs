@@ -6,11 +6,13 @@ public class FormDefinition
     [BsonId]
     [BsonRepresentation(BsonType.ObjectId)]
     public string? Id { get; set; }
+
     public string OwnerUserId { get; set; } = string.Empty;
     public string FormName { get; set; } = null!;
     public bool Expanded { get; set; } = false;
-    public string Version { get; set; } = null!;
+    public string Version { get; set; } = "1.0.0";
     public DateTime CreatedAtUtc { get; set; }
+    public DateTime? UpdatedAtUtc { get; set; }
 
     public List<FieldDefinition> Fields { get; set; } = new();
 }
@@ -21,7 +23,11 @@ public class FieldDefinition
     public string Label { get; set; } = null!;
     public string Type { get; set; } = "text";
     public bool Required { get; set; } = false;
+    public int? Min { get; set; }
+    public int? Max { get; set; }
+    public int? MinLength { get; set; }
+    public int? MaxLength { get; set; }
+    public string? Pattern { get; set; }
     public List<string>? Options { get; set; }
-
-    public int colSpan { get; set; } = 1 | 2 | 3 | 4;
+    public int ColSpan { get; set; } = 1;
 }
