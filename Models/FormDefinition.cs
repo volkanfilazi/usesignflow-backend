@@ -1,5 +1,6 @@
 ﻿using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using DynamicFormBuilder.Models;
 
 public class FormDefinition
 {
@@ -22,6 +23,9 @@ public class FieldDefinition
     public string FieldId { get; set; } = null!;
     public string Label { get; set; } = null!;
     public string Type { get; set; } = "text";
+    public string? SignatureType { get; set; }
+    public AssignedTo AssignedTo { get; set; } = AssignedTo.Owner;
+    public AgreementSnapshot? Agreement { get; set; }
     public bool Required { get; set; } = false;
     public int? Min { get; set; }
     public int? Max { get; set; }
@@ -30,4 +34,10 @@ public class FieldDefinition
     public string? Pattern { get; set; }
     public List<string>? Options { get; set; }
     public int ColSpan { get; set; } = 1;
+}
+
+public enum AssignedTo
+{
+    Owner,
+    External
 }

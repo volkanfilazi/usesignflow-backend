@@ -7,10 +7,20 @@ using System.Text;
 using Microsoft.AspNetCore.HttpOverrides;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
+using System.Text.Json.Serialization;
+using QuestPDF.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+QuestPDF.Settings.License = LicenseType.Community;
+
+builder.Services
+    .AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    });
+
 builder.Services.AddOpenApi();
 
 builder.Services.AddRateLimiter(options =>
@@ -78,9 +88,11 @@ builder.Services.AddSingleton<JwtService>();
 builder.Services.AddSingleton<FormRepository>();
 builder.Services.AddScoped<FormSubmissionRepository>();
 builder.Services.AddScoped<SignatureRequestRepository>();
+builder.Services.AddScoped<SubmissionAccessTokenRepository>();
+builder.Services.AddScoped<AgreementTemplateRepository>();
 builder.Services.AddScoped<ILegalDocumentService, LegalDocumentService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
-
+builder.Services.AddScoped<IPdfService, PdfService>();
 
 builder.Services.AddCors(options =>
 {
@@ -101,7 +113,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.ForwardedHeaders =
         ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
 
-    options.KnownNetworks.Clear();
+    options.KnownIPNetworks.Clear();
     options.KnownProxies.Clear();
 });
 
@@ -122,10 +134,12 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuerSigningKey = true,
             ValidIssuer = jwtIssuer,
             ValidAudience = jwtIssuer,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            ClockSkew = TimeSpan.Zero
         };
     });
 
+QuestPDF.Settings.EnableDebugging = true;
 var app = builder.Build();
 
 app.UseForwardedHeaders();
@@ -139,7 +153,12 @@ app.UseRouting();
 app.UseCors("AppCors");
 app.UseRateLimiter();
 
-var uploadsPath = "/var/www/uploads";
+app.UseStaticFiles();
+
+var uploadsPath = builder.Configuration["UploadSettings:PhysicalRoot"];
+if (string.IsNullOrWhiteSpace(uploadsPath))
+    throw new InvalidOperationException("UploadSettings:PhysicalRoot is missing.");
+
 Directory.CreateDirectory(uploadsPath);
 
 app.UseStaticFiles(new StaticFileOptions
