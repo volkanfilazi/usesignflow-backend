@@ -60,3 +60,15 @@ public class SignSubmissionRequest
     public string SignatureDataBase64 { get; set; } = null!;
     public string? SignedByEmail { get; set; }
 }
+
+public class SendSubmissionAccessTokenRequest
+{
+    public string Email { get; set; } = string.Empty;
+}
+
+public class UpdateSubmissionByAccessTokenRequest
+{
+    public string Token { get; set; } = string.Empty;
+    public int RowVersion { get; set; }
+    public List<FormAnswerDto> Answers { get; set; } = new();
+}

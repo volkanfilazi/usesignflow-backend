@@ -4,6 +4,8 @@ bin/
 obj/
 publish/
 wwwroot/uploads/
+appsettings.Production.json
+appsettings.Development.json
 
 # Rider
 .idea/

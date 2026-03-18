@@ -10,6 +10,13 @@ public class FormSubmissionRepository
         _collection = database.GetCollection<FormSubmission>("formSubmissions");
     }
 
+    public async Task<List<FormSubmission>> GetByUserIdAsync(string userId)
+    {
+        return await _collection
+            .Find(x => x.CreatedByUserId == userId)
+            .ToListAsync();
+    }
+
     public async Task CreateAsync(FormSubmission submission) =>
         await _collection.InsertOneAsync(submission);
 

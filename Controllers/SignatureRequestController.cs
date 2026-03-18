@@ -7,13 +7,16 @@ public class SignatureRequestsController : ControllerBase
 {
     private readonly SignatureRequestRepository _signatureRepo;
     private readonly FormSubmissionRepository _submissionRepo;
+    private readonly IConfiguration _configuration;
 
     public SignatureRequestsController(
         SignatureRequestRepository signatureRepo,
+        IConfiguration configuration,
         FormSubmissionRepository submissionRepo)
     {
         _signatureRepo = signatureRepo;
         _submissionRepo = submissionRepo;
+        _configuration = configuration;
     }
 
     [HttpGet("{token}")]
@@ -61,19 +64,14 @@ public class SignatureRequestsController : ControllerBase
             submission.Signatures.Add(signature);
         }
 
-        // burada base64 -> dosya upload yapıp url dön
         signature.SignedByEmail = request.SignedByEmail;
-        signature.SignatureUrl = "stored/signature/path.png";
+        signature.SignatureUrl = SubmissionHelper.SaveSignatureIfNeeded(request.SignatureDataBase64, _configuration);
         signature.SignedAtUtc = DateTime.UtcNow;
 
         submission.UpdatedAtUtc = DateTime.UtcNow;
         submission.RowVersion++;
 
-        if (submission.Signatures.Count > 0)
-            submission.Status = SubmissionStatus.PartiallySigned;
-
-        // zorunlu tüm signature alanları imzalandıysa Completed yap
-        // bu kontrolü form definition üzerinden yapman daha doğru olur
+        SubmissionHelper.UpdateSubmissionStatus(submission);
 
         await _submissionRepo.UpdateAsync(submission.Id!, submission);
         return NoContent();

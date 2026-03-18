@@ -37,8 +37,6 @@ public class AuthController : ControllerBase
     {
         try
         {
-            Console.WriteLine("REGISTER 1");
-
             if (string.IsNullOrWhiteSpace(request.Email))
                 return BadRequest("Email is required.");
 
@@ -51,21 +49,16 @@ public class AuthController : ControllerBase
             if (!request.TermsAccepted || !request.PrivacyAccepted)
                 return BadRequest("Terms and Privacy Policy must be accepted.");
 
-            Console.WriteLine("REGISTER 2");
-
             var email = request.Email.Trim().ToLowerInvariant();
 
             var existingUser = await _repo.GetByEmailAsync(email);
-            Console.WriteLine("REGISTER 3");
 
             if (existingUser != null)
                 return BadRequest("Email is already registered.");
 
             var terms = legalDocumentService.GetCurrentTerms();
-            Console.WriteLine("REGISTER 4");
 
             var privacy = legalDocumentService.GetCurrentPrivacy();
-            Console.WriteLine("REGISTER 5");
 
             var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
             var userAgent = Request.Headers["User-Agent"].ToString();
@@ -106,11 +99,7 @@ public class AuthController : ControllerBase
                 LegalAcceptances = acceptances
             };
 
-            Console.WriteLine("REGISTER 6 BEFORE CREATE");
-
             await _repo.CreateAsync(user);
-
-            Console.WriteLine("REGISTER 7 AFTER CREATE");
 
             var frontendBaseUrl = _configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
 
@@ -122,8 +111,6 @@ public class AuthController : ControllerBase
 
             await _emailService.SendVerificationEmailAsync(user.Email, verifyUrl, user.FullName);
 
-            Console.WriteLine("REGISTER 8 AFTER EMAIL");
-
             return Ok(new
             {
                 message = "Registration successful. Please verify your email address."
@@ -131,7 +118,6 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            Console.WriteLine("REGISTER ERROR: " + ex);
             return StatusCode(500, new
             {
                 message = ex.Message,
@@ -264,32 +250,61 @@ public class AuthController : ControllerBase
         });
     }
 
-    private string GenerateJwtToken(AuthDefinition user)
+    [EnableRateLimiting("auth-strict")]
+    [HttpPost("refresh")]
+    public async Task<ActionResult<AuthResponse>> Refresh([FromBody] RefreshTokenRequest request)
     {
-        var jwtKey = _configuration["Jwt:Key"]
-                     ?? throw new InvalidOperationException("JWT key is missing.");
+        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.RefreshToken))
+            return BadRequest("Email and refresh token are required.");
 
-        var jwtIssuer = _configuration["Jwt:Issuer"]
-                        ?? throw new InvalidOperationException("JWT issuer is missing.");
+        var email = request.Email.Trim().ToLowerInvariant();
+        var user = await _repo.GetByEmailAsync(email);
 
-        var claims = new[]
+        if (user == null)
+            return Unauthorized("Invalid refresh request.");
+
+        var incomingRefreshTokenHash = TokenHelper.ComputeSha256(request.RefreshToken);
+
+        var existingRefreshToken = user.RefreshTokens
+            .FirstOrDefault(x =>
+                x.TokenHash == incomingRefreshTokenHash &&
+                x.RevokedAtUtc == null &&
+                x.ExpiresAtUtc > DateTime.UtcNow);
+
+        if (existingRefreshToken == null)
+            return Unauthorized("Invalid or expired refresh token.");
+
+        var newAccessToken = _jwtService.GenerateAccessToken(user);
+        var newAccessTokenExpiresAtUtc = DateTime.UtcNow.AddMinutes(30);
+
+        var newRawRefreshToken = TokenHelper.GenerateSecureToken();
+        var newRefreshTokenHash = TokenHelper.ComputeSha256(newRawRefreshToken);
+
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+
+        existingRefreshToken.RevokedAtUtc = DateTime.UtcNow;
+        existingRefreshToken.RevokedByIp = ipAddress;
+        existingRefreshToken.ReplacedByTokenHash = newRefreshTokenHash;
+
+        var newRefreshToken = new RefreshTokenDefinition
         {
-            new Claim(ClaimTypes.NameIdentifier, user.Id ?? string.Empty),
-            new Claim(JwtRegisteredClaimNames.Email, user.Email),
-            new Claim("fullName", user.FullName)
+            TokenHash = newRefreshTokenHash,
+            CreatedAtUtc = DateTime.UtcNow,
+            ExpiresAtUtc = DateTime.UtcNow.AddDays(7),
+            CreatedByIp = ipAddress
         };
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        user.RefreshTokens.Add(newRefreshToken);
+        await _repo.UpdateAsync(user);
 
-        var token = new JwtSecurityToken(
-            issuer: jwtIssuer,
-            audience: jwtIssuer,
-            claims: claims,
-            expires: DateTime.UtcNow.AddDays(7),
-            signingCredentials: creds
-        );
-
-        return new JwtSecurityTokenHandler().WriteToken(token);
+        return Ok(new AuthResponse
+        {
+            Token = newAccessToken,
+            TokenExpiresAtUtc = newAccessTokenExpiresAtUtc,
+            RefreshToken = newRawRefreshToken,
+            RefreshTokenExpiresAtUtc = newRefreshToken.ExpiresAtUtc,
+            Email = user.Email,
+            FullName = user.FullName
+        });
     }
 }
