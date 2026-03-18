@@ -15,6 +15,7 @@ public class FormSubmissionsController : ControllerBase
     private readonly IEmailService _emailService;
     private readonly IPdfService _pdfService;
     private readonly SubmissionAccessTokenRepository _submissionAccessTokenRepository;
+    private readonly FormSubmissionRepository _formSubmissionRepository;
 
     public FormSubmissionsController(
         FormRepository formRepo,
@@ -22,6 +23,7 @@ public class FormSubmissionsController : ControllerBase
         IConfiguration configuration,
         IEmailService emailService,
         IPdfService pdfService,
+        FormSubmissionRepository formSubmissionRepository,
         SubmissionAccessTokenRepository submissionAccessTokenRepository)
     {
         _formRepo = formRepo;
@@ -29,7 +31,9 @@ public class FormSubmissionsController : ControllerBase
         _submissionRepo = submissionRepo;
         _configuration = configuration;
         _pdfService = pdfService;
+        _submissionRepo = formSubmissionRepository;
         _submissionAccessTokenRepository = submissionAccessTokenRepository;
+        _formSubmissionRepository = formSubmissionRepository;
     }
 
     [Authorize]
@@ -92,7 +96,7 @@ public class FormSubmissionsController : ControllerBase
             CreatedByUserId = userId,
             CreatedAtUtc = now,
             UpdatedAtUtc = now,
-            Status = SubmissionStatus.Draft,
+            Status = SubmissionStatus.Pending,
             FieldsSnapshot = form.Fields.Select(f => new FieldDefinition
             {
                 FieldId = f.FieldId,
@@ -136,7 +140,6 @@ public class FormSubmissionsController : ControllerBase
         return Ok(submission);
     }
 
-    [AllowAnonymous]
     [HttpGet("{id}")]
     public async Task<ActionResult<FormSubmission>> GetById(string id, [FromQuery] string? accessToken)
     {
@@ -161,6 +164,27 @@ public class FormSubmissionsController : ControllerBase
 
         if (token.SubmissionId != id)
             return Forbid();
+
+        if (submission.Status == SubmissionStatus.Completed)
+            return BadRequest(new ApiError
+            {
+                Code = "SUBMISSION_COMPLETED",
+                Message = "This submission has already been completed."
+            });
+
+        if (submission.Status == SubmissionStatus.Cancelled)
+            return BadRequest(new ApiError
+            {
+                Code = "SUBMISSION_CANCELLED",
+                Message = "This submission has been cancelled."
+            });
+
+        if (submission.Status == SubmissionStatus.Expired)
+            return BadRequest(new ApiError
+            {
+                Code = "SUBMISSION_EXPIRED",
+                Message = "This submission has expired."
+            });
 
         return Ok(submission);
     }
@@ -228,8 +252,45 @@ public class FormSubmissionsController : ControllerBase
         existing.UpdatedAtUtc = DateTime.UtcNow;
         existing.RowVersion++;
 
-        await _submissionRepo.UpdateAsync(id, existing);
+        await _submissionRepo.UpdateAsync(existing);
         return NoContent();
+    }
+
+    [Authorize]
+    [HttpPost("{submissionId}/cancel")]
+    public async Task<ActionResult> CancelSubmission(string submissionId)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized();
+
+        var submission = await _submissionRepo.GetByIdAsync(submissionId);
+        if (submission is null)
+            return NotFound("Submission not found.");
+
+        if (submission.CreatedByUserId != userId)
+            return Forbid();
+
+        if (submission.Status == SubmissionStatus.Completed)
+            return BadRequest("Completed submissions cannot be cancelled.");
+
+        if (submission.Status == SubmissionStatus.Cancelled)
+            return BadRequest("Submission is already cancelled.");
+
+        if (submission.Status == SubmissionStatus.Expired)
+            return BadRequest("Expired submissions cannot be cancelled.");
+
+        submission.Status = SubmissionStatus.Cancelled;
+        submission.UpdatedAtUtc = DateTime.UtcNow;
+
+        await _submissionRepo.UpdateAsync(submission);
+
+        await _submissionAccessTokenRepository.DeleteBySubmissionIdAsync(submission.Id!);
+
+        return Ok(new
+        {
+            message = "Submission cancelled successfully."
+        });
     }
 
     [AllowAnonymous]
@@ -244,6 +305,15 @@ public class FormSubmissionsController : ControllerBase
         var existing = await _submissionRepo.GetByIdAsync(id);
         if (existing is null)
             return NotFound();
+
+        if (existing.Status == SubmissionStatus.Cancelled)
+            return BadRequest("This submission has been cancelled.");
+
+        if (existing.Status == SubmissionStatus.Completed)
+            return BadRequest("This submission has already been completed.");
+
+        if (existing.Status == SubmissionStatus.Expired)
+            return BadRequest("This submission has expired.");
 
         if (existing.RowVersion != request.RowVersion)
             return Conflict("This record was changed by another user.");
@@ -303,7 +373,7 @@ public class FormSubmissionsController : ControllerBase
         existing.UpdatedAtUtc = DateTime.UtcNow;
         existing.RowVersion++;
 
-        await _submissionRepo.UpdateAsync(id, existing);
+        await _submissionRepo.UpdateAsync(existing);
         return NoContent();
     }
 
@@ -327,9 +397,12 @@ public class FormSubmissionsController : ControllerBase
         if (submission.CreatedByUserId != userId)
             return Forbid();
 
-        var hasExternalFields = submission.FieldsSnapshot.Any(f => f.AssignedTo == AssignedTo.External);
-        if (!hasExternalFields)
-            return BadRequest("This submission has no external fields.");
+        var hasExternalWork = submission.FieldsSnapshot.Any(f =>
+        f.AssignedTo == AssignedTo.External || 
+        (f.Type == "agreement" && f.Required));
+
+        if (!hasExternalWork)
+            return BadRequest("This submission has no external actions.");
 
         var normalizedEmail = request.Email.Trim().ToLowerInvariant();
 
@@ -382,7 +455,22 @@ public class FormSubmissionsController : ControllerBase
 
         var accessToken = await _submissionAccessTokenRepository.GetByTokenHashAsync(tokenHash);
         if (accessToken is null)
-            return NotFound("Access token not found.");
+            return BadRequest(new ApiError
+            {
+                Code = "SUBMISSION_CANCELLED",
+                Message = "This submission has been cancelled."
+            });
+
+        var submission = await _submissionRepo.GetByIdAsync(accessToken.SubmissionId);
+
+        if (submission.Status == SubmissionStatus.Completed)
+            return BadRequest("This submission has already been completed.");
+
+        if (submission.Status == SubmissionStatus.Cancelled)
+            return BadRequest("This submission has been cancelled.");
+
+        if (submission.Status == SubmissionStatus.Expired)
+            return BadRequest("This submission has expired.");
 
         if (accessToken.IsRevoked)
             return BadRequest("Access token has been revoked.");
@@ -390,7 +478,6 @@ public class FormSubmissionsController : ControllerBase
         if (accessToken.ExpiresAtUtc < DateTime.UtcNow)
             return BadRequest("Access token has expired.");
 
-        var submission = await _submissionRepo.GetByIdAsync(accessToken.SubmissionId);
         if (submission is null)
             return NotFound("Submission not found.");
 
@@ -544,6 +631,14 @@ public class FormSubmissionsController : ControllerBase
             var submission = await _submissionRepo.GetByIdAsync(id);
             if (submission is null)
                 return NotFound();
+
+            var existing = await _submissionRepo.GetByIdAsync(id);
+
+            if (existing.Status == SubmissionStatus.Cancelled)
+                return BadRequest("This submission has been cancelled.");
+
+            if (existing.Status == SubmissionStatus.Expired)
+                return BadRequest("This submission has expired.");
 
             var pdfBytes = await _pdfService.GenerateSubmissionPdfAsync(submission);
 

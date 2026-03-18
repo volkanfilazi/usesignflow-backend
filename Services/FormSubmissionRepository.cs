@@ -23,13 +23,6 @@ public class FormSubmissionRepository
     public async Task<FormSubmission?> GetByIdAsync(string id) =>
         await _collection.Find(x => x.Id == id).FirstOrDefaultAsync();
 
-    public async Task UpdateAsync(string id, FormSubmission submission) =>
-        await _collection.ReplaceOneAsync(x => x.Id == id, submission);
-
-    public async Task<FormSubmission?> GetDraftByFormAndUserAsync(string formId, string userId) =>
-        await _collection.Find(x =>
-            x.FormId == formId &&
-            x.CreatedByUserId == userId &&
-            x.Status == SubmissionStatus.Draft)
-        .FirstOrDefaultAsync();
+    public async Task UpdateAsync(FormSubmission submission) =>
+    await _collection.ReplaceOneAsync(x => x.Id == submission.Id, submission);
 }

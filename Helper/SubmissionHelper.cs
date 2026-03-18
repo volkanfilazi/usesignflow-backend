@@ -2,45 +2,47 @@ public static class SubmissionHelper
 {
     public static void UpdateSubmissionStatus(FormSubmission submission)
     {
-        var signatureFieldIds = submission.FieldsSnapshot
-            .Where(f => f.Type == "signaturePad")
-            .Select(f => f.FieldId)
-            .ToHashSet();
-
-        var totalSignatureFields = signatureFieldIds.Count;
-
         if (submission.Status == SubmissionStatus.Cancelled ||
             submission.Status == SubmissionStatus.Expired)
         {
             return;
         }
 
-        if (totalSignatureFields == 0)
+        var requiredFields = submission.FieldsSnapshot
+            .Where(f => f.Required)
+            .ToList();
+
+        if (!requiredFields.Any())
         {
-            submission.Status = SubmissionStatus.Draft;
+            submission.Status = SubmissionStatus.Completed;
             return;
         }
 
-        var signedCount = submission.Signatures
-            .Where(s =>
-                signatureFieldIds.Contains(s.FieldId) &&
-                !string.IsNullOrWhiteSpace(s.SignatureUrl))
-            .Select(s => s.FieldId)
-            .Distinct()
-            .Count();
+        var allRequiredCompleted = requiredFields.All(field => IsFieldCompleted(field, submission));
 
-        if (signedCount == 0)
+        submission.Status = allRequiredCompleted
+            ? SubmissionStatus.Completed
+            : SubmissionStatus.Pending;
+    }
+
+    private static bool IsFieldCompleted(FieldDefinition field, FormSubmission submission)
+    {
+        if (field.Type == "signaturePad")
         {
-            submission.Status = SubmissionStatus.PendingSignature;
+            return submission.Signatures.Any(s =>
+                s.FieldId == field.FieldId &&
+                !string.IsNullOrWhiteSpace(s.SignatureUrl));
         }
-        else if (signedCount < totalSignatureFields)
+
+        var answerValue = submission.Answers
+            .FirstOrDefault(a => a.FieldId == field.FieldId)?.Value;
+
+        if (field.Type == "agreement" || field.Type == "checkbox")
         {
-            submission.Status = SubmissionStatus.PartiallySigned;
+            return string.Equals(answerValue, "true", StringComparison.OrdinalIgnoreCase);
         }
-        else
-        {
-            submission.Status = SubmissionStatus.Completed;
-        }
+
+        return !string.IsNullOrWhiteSpace(answerValue);
     }
 
     public static string? SaveSignatureIfNeeded(string? value, IConfiguration configuration)

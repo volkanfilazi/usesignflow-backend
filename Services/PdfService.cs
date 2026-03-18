@@ -76,6 +76,13 @@ public class PdfService : IPdfService
                                     ? "-"
                                     : field.Agreement.Content;
 
+                                var agreementAnswer = submission.Answers
+                                    .FirstOrDefault(a => a.FieldId == field.FieldId)?.Value;
+
+                                var acceptanceText = string.Equals(agreementAnswer, "true", StringComparison.OrdinalIgnoreCase)
+                                    ? "[x] I accept this agreement"
+                                    : "[ ] I accept this agreement";
+
                                 column.Item().Border(1)
                                     .BorderColor(Colors.Grey.Lighten2)
                                     .Padding(10)
@@ -90,6 +97,11 @@ public class PdfService : IPdfService
 
                                         item.Item().Text(agreementContent)
                                             .FontSize(11);
+
+                                        item.Item().PaddingTop(4).Text(acceptanceText)
+                                            .FontSize(10)
+                                            .FontColor(Colors.Grey.Darken2)
+                                            .SemiBold();
                                     });
 
                                 continue;

@@ -73,7 +73,7 @@ public class SignatureRequestsController : ControllerBase
 
         SubmissionHelper.UpdateSubmissionStatus(submission);
 
-        await _submissionRepo.UpdateAsync(submission.Id!, submission);
+        await _submissionRepo.UpdateAsync(submission);
         return NoContent();
     }
 }

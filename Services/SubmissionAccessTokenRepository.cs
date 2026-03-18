@@ -21,4 +21,9 @@ public class SubmissionAccessTokenRepository
             .Find(x => x.TokenHash == hash && !x.IsRevoked)
             .FirstOrDefaultAsync();
     }
+
+    public async Task DeleteBySubmissionIdAsync(string submissionId)
+    {
+        await _collection.DeleteManyAsync(x => x.SubmissionId == submissionId);
+    }
 }

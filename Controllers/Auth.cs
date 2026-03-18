@@ -149,7 +149,7 @@ public class AuthController : ControllerBase
             });
 
         var accessToken = _jwtService.GenerateAccessToken(user);
-        var accessTokenExpiresAtUtc = DateTime.UtcNow.AddMinutes(30);
+        var accessTokenExpiresAtUtc = DateTime.UtcNow.AddSeconds(30);
 
         var rawRefreshToken = TokenHelper.GenerateSecureToken();
         var refreshTokenHash = TokenHelper.ComputeSha256(rawRefreshToken);
@@ -163,6 +163,13 @@ public class AuthController : ControllerBase
             ExpiresAtUtc = DateTime.UtcNow.AddDays(7),
             CreatedByIp = ipAddress
         };
+
+        var now = DateTime.UtcNow;
+        user.RefreshTokens = user.RefreshTokens
+            .Where(x => x.RevokedAtUtc == null && x.ExpiresAtUtc > now)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Take(5)
+            .ToList();
 
         user.RefreshTokens.Add(refreshToken);
         await _repo.UpdateAsync(user);
@@ -275,7 +282,7 @@ public class AuthController : ControllerBase
             return Unauthorized("Invalid or expired refresh token.");
 
         var newAccessToken = _jwtService.GenerateAccessToken(user);
-        var newAccessTokenExpiresAtUtc = DateTime.UtcNow.AddMinutes(30);
+        var newAccessTokenExpiresAtUtc = DateTime.UtcNow.AddSeconds(30);
 
         var newRawRefreshToken = TokenHelper.GenerateSecureToken();
         var newRefreshTokenHash = TokenHelper.ComputeSha256(newRawRefreshToken);
@@ -295,16 +302,18 @@ public class AuthController : ControllerBase
         };
 
         user.RefreshTokens.Add(newRefreshToken);
+
+        user.RefreshTokens = user.RefreshTokens
+            .Where(x => x.RevokedAtUtc == null && x.ExpiresAtUtc > DateTime.UtcNow)
+            .ToList();
+
         await _repo.UpdateAsync(user);
 
         return Ok(new AuthResponse
         {
             Token = newAccessToken,
             TokenExpiresAtUtc = newAccessTokenExpiresAtUtc,
-            RefreshToken = newRawRefreshToken,
-            RefreshTokenExpiresAtUtc = newRefreshToken.ExpiresAtUtc,
-            Email = user.Email,
-            FullName = user.FullName
+            RefreshToken = newRawRefreshToken
         });
     }
 }
