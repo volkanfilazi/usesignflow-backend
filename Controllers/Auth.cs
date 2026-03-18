@@ -149,7 +149,7 @@ public class AuthController : ControllerBase
             });
 
         var accessToken = _jwtService.GenerateAccessToken(user);
-        var accessTokenExpiresAtUtc = DateTime.UtcNow.AddSeconds(30);
+        var accessTokenExpiresAtUtc = DateTime.UtcNow.AddMinutes(30);
 
         var rawRefreshToken = TokenHelper.GenerateSecureToken();
         var refreshTokenHash = TokenHelper.ComputeSha256(rawRefreshToken);
@@ -282,7 +282,7 @@ public class AuthController : ControllerBase
             return Unauthorized("Invalid or expired refresh token.");
 
         var newAccessToken = _jwtService.GenerateAccessToken(user);
-        var newAccessTokenExpiresAtUtc = DateTime.UtcNow.AddSeconds(30);
+        var newAccessTokenExpiresAtUtc = DateTime.UtcNow.AddMinutes(30);
 
         var newRawRefreshToken = TokenHelper.GenerateSecureToken();
         var newRefreshTokenHash = TokenHelper.ComputeSha256(newRawRefreshToken);
