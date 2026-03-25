@@ -64,6 +64,7 @@ public class SignSubmissionRequest
 public class SendSubmissionAccessTokenRequest
 {
     public string Email { get; set; } = string.Empty;
+    public string Subject { get; set;  } = string.Empty;
 }
 
 public class UpdateSubmissionByAccessTokenRequest

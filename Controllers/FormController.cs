@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
+using DynamicFormBuilder.Services.Billing;
 
 namespace FormBuilderApi.Controllers;
 
@@ -10,8 +11,18 @@ namespace FormBuilderApi.Controllers;
 public class FormsController : ControllerBase
 {
     private readonly FormRepository _repo;
+    private readonly ISubscriptionService _subscriptionService;
+    private readonly IPlanEntitlementService _planEntitlementService;
 
-    public FormsController(FormRepository repo) => _repo = repo;
+    public FormsController(
+        FormRepository repo,
+        IPlanEntitlementService planEntitlementService,
+        ISubscriptionService subscriptionService)
+    {
+        _repo = repo;
+        _planEntitlementService = planEntitlementService;
+        _subscriptionService = subscriptionService;
+    }
 
     [Authorize]
     [HttpGet("mine")]
@@ -35,13 +46,32 @@ public class FormsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<FormDefinition>> Create([FromBody] FormDefinition form)
     {
-        // minimal validation
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized();
+
+        var subscription = await _subscriptionService.GetOrCreateForUserAsync(userId);
+        var entitlements = _planEntitlementService.Get(subscription.PlanCode);
+        var activeFlowCount = await _repo.CountByUserIdAsync(userId);
+
+        if (activeFlowCount >= entitlements.MaxActiveFlows)
+        {
+            return StatusCode(403, new
+            {
+                code = "PLAN_LIMIT_REACHED",
+                message = $"Your current plan allows up to {entitlements.MaxActiveFlows} active flows.",
+                currentPlan = subscription.PlanCode.ToString(),
+                limit = entitlements.MaxActiveFlows
+            });
+        }
+
+
         if (string.IsNullOrWhiteSpace(form.FormName))
             return BadRequest("formName is required.");
 
         if (form.Fields is null) form.Fields = new();
 
-        // key unique check (case-insensitive)
         var keys = form.Fields
             .Where(f => !string.IsNullOrWhiteSpace(f.FieldId))
             .Select(f => f.FieldId.Trim().ToLowerInvariant())
@@ -50,21 +80,15 @@ public class FormsController : ControllerBase
         if (keys.Count != keys.Distinct().Count())
             return BadRequest("Each field 'key' must be unique within the form.");
 
-        // required select must have options
         foreach (var f in form.Fields)
         {
-            if (string.Equals(f.Type, "select", StringComparison.OrdinalIgnoreCase)
+            if (string.Equals(f.Type, "Dropdown", StringComparison.OrdinalIgnoreCase)
                 && (f.Options is null || f.Options.Count == 0))
             {
-                return BadRequest($"Field '{f.FieldId}' is type 'select' but has no options.");
+                return BadRequest($"Field '{f.FieldId}' is type 'Dropdown' but has no options.");
             }
         }
 
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (string.IsNullOrWhiteSpace(userId))
-            return Unauthorized();
-
-        // Let Mongo create Id
         form.Id = null;
         form.OwnerUserId = userId;
         form.CreatedAtUtc = DateTime.UtcNow;
@@ -76,11 +100,28 @@ public class FormsController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> Update(string id, [FromBody] FormDefinition updated)
     {
-        var existing = await _repo.GetByIdAsync(id);
-        if (existing is null) return NotFound();
+        if (updated is null)
+            return BadRequest();
 
-        updated.Id = id; // keep id stable
-        await _repo.UpdateAsync(id, updated);
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized();
+
+        var existing = await _repo.GetByIdAsync(id);
+        if (existing is null)
+            return NotFound();
+
+        if (existing.OwnerUserId != userId)
+            return Forbid();
+
+        existing.FormName = updated.FormName;
+        existing.AgreementContentHtml = updated.AgreementContentHtml;
+        existing.Expanded = updated.Expanded;
+        existing.Version = updated.Version;
+        existing.Fields = updated.Fields;
+        existing.UpdatedAtUtc = DateTime.UtcNow;
+
+        await _repo.UpdateAsync(id, existing);
         return NoContent();
     }
 

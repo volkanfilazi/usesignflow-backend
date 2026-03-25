@@ -2,22 +2,30 @@
 using MailKit.Security;
 using MimeKit;
 using System.Net;
+using DynamicFormBuilder.Models.Billing;
+using DynamicFormBuilder.Repositories.Billing;
 
 namespace DynamicFormBuilder.Services
 {
     public class EmailService : IEmailService
     {
         private readonly IConfiguration _configuration;
+        private readonly EmailLogRepository _emailLogRepository;
 
-        public EmailService(IConfiguration configuration)
+        public EmailService(
+            IConfiguration configuration,
+            EmailLogRepository emailLogRepository)
         {
             _configuration = configuration;
+            _emailLogRepository = emailLogRepository;
         }
 
         public async Task SendVerificationEmailAsync(string toEmail, string verifyUrl, string? fullName)
         {
             var safeName = WebUtility.HtmlEncode(fullName ?? "there");
             var safeUrl = WebUtility.HtmlEncode(verifyUrl);
+
+            var subject = "Verify your email";
 
             var html = BuildBaseEmailLayout(
                 preheader: "Email verification required",
@@ -51,24 +59,42 @@ namespace DynamicFormBuilder.Services
                 footerText: "If you did not create this account, you can safely ignore this email."
             );
 
-            await SendHtmlEmailAsync(toEmail, "Verify your email", html);
+            await SendHtmlEmailAsync(toEmail, subject, html);
         }
 
         public async Task SendSubmissionSignerEmailAsync(
-            string email,
-            string accessUrl,
-            string senderName,
-            string formName)
+    string userId,
+    string email,
+    string subject,
+    string accessUrl,
+    string senderName,
+    string formName,
+    string? submissionId = null)
         {
-            var safeEmail = WebUtility.HtmlEncode(email);
-            var safeUrl = WebUtility.HtmlEncode(accessUrl);
-            var safeSenderName = WebUtility.HtmlEncode(senderName);
-            var safeFormName = WebUtility.HtmlEncode(formName);
+            var log = new EmailLog
+            {
+                UserId = userId,
+                ToEmail = email,
+                EmailType = "SubmissionInvite",
+                RelatedEntityId = submissionId ?? string.Empty,
+                Subject = subject,
+                Status = EmailLogStatus.Pending,
+                CreatedAtUtc = DateTime.UtcNow
+            };
 
-            var html = BuildBaseEmailLayout(
-                preheader: "Signature request",
-                title: "You have received a form to review and sign",
-                bodyHtml: $@"
+            await _emailLogRepository.CreateAsync(log);
+
+            try
+            {
+                var safeEmail = WebUtility.HtmlEncode(email);
+                var safeUrl = WebUtility.HtmlEncode(accessUrl);
+                var safeSenderName = WebUtility.HtmlEncode(senderName);
+                var safeFormName = WebUtility.HtmlEncode(formName);
+
+                var html = BuildBaseEmailLayout(
+                    preheader: "Signature request",
+                    title: "You have received a form to review and sign",
+                    bodyHtml: $@"
 <p style=""margin:0; font-size:16px; line-height:1.8; color:#4b5563; text-align:center;"">
   <strong style=""color:#111827;"">{safeSenderName}</strong> has sent you the form
   <strong style=""color:#111827;"">{safeFormName}</strong> to review and sign.
@@ -94,21 +120,43 @@ namespace DynamicFormBuilder.Services
     </p>
   </div>
 </div>",
-                footerText: $@"This email was sent to <strong style=""color:#111827;"">{safeEmail}</strong>.
+                    footerText: $@"This email was sent to <strong style=""color:#111827;"">{safeEmail}</strong>.
 If you were not expecting this request, you can safely ignore it."
-            );
+                );
 
-            await SendHtmlEmailAsync(email, $"Signature request · {formName}", html);
+                await SendHtmlEmailAsync(email, subject, html);
+
+                log.Status = EmailLogStatus.Sent;
+                log.SentAtUtc = DateTime.UtcNow;
+                log.ErrorMessage = null;
+            }
+            catch (Exception ex)
+            {
+                log.Status = EmailLogStatus.Failed;
+                log.ErrorMessage = ex.Message;
+                log.SentAtUtc = null;
+
+                throw;
+            }
+            finally
+            {
+                await _emailLogRepository.UpdateAsync(log.Id, log);
+            }
         }
 
         private async Task SendHtmlEmailAsync(string toEmail, string subject, string htmlBody)
         {
             var message = new MimeMessage();
 
-            message.From.Add(new MailboxAddress(
-                _configuration["Email:FromName"],
-                _configuration["Email:FromAddress"]));
+            var fromName = _configuration["Email:FromName"];
+            var fromAddress = _configuration["Email:FromAddress"];
 
+            if (string.IsNullOrEmpty(fromName) || string.IsNullOrEmpty(fromAddress))
+            {
+                throw new InvalidOperationException("Email sender settings are missing.");
+            }
+
+            message.From.Add(new MailboxAddress(fromName, fromAddress));
             message.To.Add(MailboxAddress.Parse(toEmail));
             message.Subject = subject;
 
@@ -140,7 +188,7 @@ If you were not expecting this request, you can safely ignore it."
         {
             var safePreheader = WebUtility.HtmlEncode(preheader);
             var safeTitle = WebUtility.HtmlEncode(title);
-            var safeFooter = footerText; // body/footer içeriği bazı yerlerde kontrollü HTML içeriyor
+            var safeFooter = footerText;
 
             return $@"
 <!DOCTYPE html>

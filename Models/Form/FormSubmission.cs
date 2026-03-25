@@ -10,6 +10,7 @@ public class FormSubmission
     [BsonRepresentation(BsonType.ObjectId)]
     public string FormId { get; set; } = null!;
     public string FormName { get; set; } = null!;
+    public string? AgreementContentHtml { get; set; }
     public string FormVersion { get; set; } = "1.0.0";
     public string CreatedByUserId { get; set; } = null!;
     public SubmissionStatus Status { get; set; } = SubmissionStatus.Pending;

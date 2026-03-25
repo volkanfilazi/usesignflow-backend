@@ -27,7 +27,7 @@ public static class SubmissionHelper
 
     private static bool IsFieldCompleted(FieldDefinition field, FormSubmission submission)
     {
-        if (field.Type == "signaturePad")
+        if (field.Type == "Signature")
         {
             return submission.Signatures.Any(s =>
                 s.FieldId == field.FieldId &&
@@ -37,7 +37,7 @@ public static class SubmissionHelper
         var answerValue = submission.Answers
             .FirstOrDefault(a => a.FieldId == field.FieldId)?.Value;
 
-        if (field.Type == "agreement" || field.Type == "checkbox")
+        if (field.Type == "Agreement" || field.Type == "Checkbox")
         {
             return string.Equals(answerValue, "true", StringComparison.OrdinalIgnoreCase);
         }
