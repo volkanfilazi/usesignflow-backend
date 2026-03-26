@@ -245,4 +245,52 @@ public class SubscriptionServiceTests
             s.Status == SubscriptionStatus.Active
         )), Times.Once);
     }
+
+    /*
+     * free user
+     * current period: 10 March 2026 14:00 → 10 April 2026 14:00
+     * now: 20 March 2026 10:00
+     *
+     * expected:
+     * period should stay the same
+     * no repository update should happen
+     */
+    [Fact]
+    public async Task GetOrCreateForUserAsync_WhenFreeSubscriptionIsStillInCurrentPeriod_ShouldNotAdvanceOrUpdate()
+    {
+        // Arrange
+        var userId = "user-1";
+
+        var clock = new FakeClock
+        {
+            UtcNow = new DateTime(2026, 3, 20, 10, 0, 0, DateTimeKind.Utc)
+        };
+
+        var existingSubscription = new UserSubscription
+        {
+            UserId = userId,
+            PlanCode = PlanCode.Free,
+            Status = SubscriptionStatus.Active,
+            CurrentPeriodStartUtc = new DateTime(2026, 3, 10, 14, 0, 0, DateTimeKind.Utc),
+            CurrentPeriodEndUtc = new DateTime(2026, 4, 10, 14, 0, 0, DateTimeKind.Utc),
+            CancelAtPeriodEnd = false
+        };
+
+        var repository = new Mock<ISubscriptionRepository>();
+
+        repository
+            .Setup(x => x.GetByUserIdAsync(userId))
+            .ReturnsAsync(existingSubscription);
+
+        var service = new SubscriptionService(clock, repository.Object);
+
+        // Act
+        var result = await service.GetOrCreateForUserAsync(userId);
+
+        // Assert
+        result.CurrentPeriodStartUtc.Should().Be(new DateTime(2026, 3, 10, 14, 0, 0, DateTimeKind.Utc));
+        result.CurrentPeriodEndUtc.Should().Be(new DateTime(2026, 4, 10, 14, 0, 0, DateTimeKind.Utc));
+
+        repository.Verify(x => x.UpsertByUserIdAsync(It.IsAny<UserSubscription>()), Times.Never);
+    }
 }

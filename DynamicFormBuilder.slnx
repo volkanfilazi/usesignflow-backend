@@ -1,4 +1,4 @@
 <Solution>
-  <Project Path="../DynamicFormBuilder.Tests/DynamicFormBuilder.Tests.csproj" />
   <Project Path="DynamicFormBuilder.csproj" />
+  <Project Path="DynamicFormBuilder.Tests/DynamicFormBuilder.Tests.csproj" />
 </Solution>
