@@ -1,0 +1,42 @@
+name: .NET Tests
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+      - feature/**
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore app
+        run: dotnet restore ./DynamicFormBuilder.csproj
+
+      - name: Restore tests
+        run: dotnet restore ./DynamicFormBuilder.Tests/DynamicFormBuilder.Tests.csproj
+
+      - name: Build app
+        run: dotnet build ./DynamicFormBuilder.csproj --configuration Release --no-restore
+
+      - name: Build tests
+        run: dotnet build ./DynamicFormBuilder.Tests/DynamicFormBuilder.Tests.csproj --configuration Release --no-restore
+
+      - name: Run tests
+        run: dotnet test ./DynamicFormBuilder.Tests/DynamicFormBuilder.Tests.csproj --configuration Release --no-build --verbosity normal
