@@ -20,34 +20,39 @@ namespace DynamicFormBuilder.Services
             _emailLogRepository = emailLogRepository;
         }
 
-        public async Task SendVerificationEmailAsync(string toEmail, string verifyUrl, string? fullName)
+        private async Task SendActionEmailAsync(
+    string toEmail,
+    string subject,
+    string preheader,
+    string title,
+    string bodyText,
+    string actionText,
+    string actionUrl,
+    string footerText,
+    string? fullName)
         {
             var safeName = WebUtility.HtmlEncode(fullName ?? "there");
-            var safeUrl = WebUtility.HtmlEncode(verifyUrl);
-
-            var subject = "Verify your email";
+            var safeUrl = WebUtility.HtmlEncode(actionUrl);
+            var safeBodyText = WebUtility.HtmlEncode(bodyText);
+            var safeActionText = WebUtility.HtmlEncode(actionText);
 
             var html = BuildBaseEmailLayout(
-                preheader: "Email verification required",
-                title: "Verify your email address",
+                preheader: preheader,
+                title: title,
                 bodyHtml: $@"
 <p style=""margin:0; font-size:16px; line-height:1.8; color:#4b5563; text-align:center;"">
-  Hi <strong style=""color:#111827;"">{safeName}</strong>, thanks for creating your account.
-  Please confirm your email address to activate your account and continue securely.
+  Hi <strong style=""color:#111827;"">{safeName}</strong>, {safeBodyText}
 </p>
 
 <div style=""padding:28px 0 0 0; text-align:center;"">
   <a href=""{safeUrl}""
      style=""display:inline-block; padding:15px 28px; background:linear-gradient(135deg,#92e3a9,#6dd58c); color:#0f172a; text-decoration:none; font-size:16px; font-weight:700; border-radius:16px; box-shadow:0 14px 30px rgba(109,213,140,0.28);"">
-    Verify Email
+    {safeActionText}
   </a>
 </div>
 
 <div style=""padding:28px 0 0 0;"">
   <div style=""background:#f8fffa; border:1px solid #dff5e6; border-radius:20px; padding:18px 20px;"">
-    <p style=""margin:0 0 10px 0; font-size:15px; font-weight:700; color:#111827;"">
-      This link is valid for 24 hours.
-    </p>
     <p style=""margin:0; font-size:14px; line-height:1.7; color:#6b7280;"">
       If the button does not work, copy and paste the following link into your browser:
     </p>
@@ -56,7 +61,79 @@ namespace DynamicFormBuilder.Services
     </p>
   </div>
 </div>",
-                footerText: "If you did not create this account, you can safely ignore this email."
+                footerText: footerText
+            );
+
+            await SendHtmlEmailAsync(toEmail, subject, html);
+        }
+
+        public Task SendVerificationEmailAsync(string toEmail, string verifyUrl, string? fullName)
+        {
+            return SendActionEmailAsync(
+                toEmail: toEmail,
+                subject: "Verify your email",
+                preheader: "Email verification required",
+                title: "Verify your email address",
+                bodyText: "thanks for creating your account. Please confirm your email address to activate your account and continue securely.",
+                actionText: "Verify Email",
+                actionUrl: verifyUrl,
+                footerText: "If you did not create this account, you can safely ignore this email.",
+                fullName: fullName
+            );
+        }
+
+        public Task SendSubmissionCompletedEmailAsync(string toEmail, string submissionUrl, string? fullName)
+        {
+            return SendActionEmailAsync(
+                toEmail: toEmail,
+                subject: "Your submission is complete",
+                preheader: "Your submission has been completed",
+                title: "Your form is ready",
+                bodyText: "your submission has been completed. You can review the details by clicking the button below.",
+                actionText: "View Submission",
+                actionUrl: submissionUrl,
+                footerText: "If you were not expecting this email, you can safely ignore this email.",
+                fullName: fullName
+            );
+        }
+
+        public async Task SendPasswordResetEmailAsync(string toEmail, string resetUrl, string? fullName)
+        {
+            var safeName = WebUtility.HtmlEncode(fullName ?? "there");
+            var safeUrl = WebUtility.HtmlEncode(resetUrl);
+
+            var subject = "Reset your password";
+
+            var html = BuildBaseEmailLayout(
+                preheader: "Password reset request",
+                title: "Reset your password",
+                bodyHtml: $@"
+<p style=""margin:0; font-size:16px; line-height:1.8; color:#4b5563; text-align:center;"">
+  Hi <strong style=""color:#111827;"">{safeName}</strong>, we received a request to reset your password.
+  Click the button below to create a new password for your account.
+</p>
+
+<div style=""padding:28px 0 0 0; text-align:center;"">
+  <a href=""{safeUrl}""
+     style=""display:inline-block; padding:15px 28px; background:linear-gradient(135deg,#f9c46b,#f4a261); color:#0f172a; text-decoration:none; font-size:16px; font-weight:700; border-radius:16px; box-shadow:0 14px 30px rgba(244,162,97,0.28);"">
+    Reset Password
+  </a>
+</div>
+
+<div style=""padding:28px 0 0 0;"">
+  <div style=""background:#fffaf5; border:1px solid #fde7d7; border-radius:20px; padding:18px 20px;"">
+    <p style=""margin:0 0 10px 0; font-size:15px; font-weight:700; color:#111827;"">
+      This link is valid for 1 hour.
+    </p>
+    <p style=""margin:0; font-size:14px; line-height:1.7; color:#6b7280;"">
+      If the button does not work, copy and paste the following link into your browser:
+    </p>
+    <p style=""margin:12px 0 0 0; word-break:break-all; font-size:13px; line-height:1.7; color:#b45309;"">
+      <a href=""{safeUrl}"" style=""color:#b45309; text-decoration:none;"">{safeUrl}</a>
+    </p>
+  </div>
+</div>",
+                footerText: "If you did not request a password reset, you can safely ignore this email."
             );
 
             await SendHtmlEmailAsync(toEmail, subject, html);

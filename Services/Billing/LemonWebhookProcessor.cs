@@ -1,5 +1,6 @@
-using System.Text.Json;
 using DynamicFormBuilder.Models.Billing;
+using DynamicFormBuilder.Repositories.Billing;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace DynamicFormBuilder.Services.Billing;
@@ -63,12 +64,12 @@ public interface ILemonWebhookProcessor
 public class LemonWebhookProcessor : ILemonWebhookProcessor
 {
     private readonly BillingWebhookEventRepository _eventRepository;
-    private readonly SubscriptionRepository _subscriptionRepository;
+    private readonly ISubscriptionRepository _subscriptionRepository;
     private readonly ILemonPlanMapper _planMapper;
 
     public LemonWebhookProcessor(
         BillingWebhookEventRepository eventRepository,
-        SubscriptionRepository subscriptionRepository,
+        ISubscriptionRepository subscriptionRepository,
         ILemonPlanMapper planMapper)
     {
         _eventRepository = eventRepository;

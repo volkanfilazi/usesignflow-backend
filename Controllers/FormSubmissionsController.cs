@@ -10,6 +10,7 @@ using DynamicFormBuilder.Models;
 public class FormSubmissionsController : ControllerBase
 {
     private readonly FormRepository _formRepo;
+    private readonly AuthRepository _authRepo;
     private readonly FormSubmissionRepository _submissionRepo;
     private readonly IConfiguration _configuration;
     private readonly IEmailService _emailService;
@@ -19,6 +20,7 @@ public class FormSubmissionsController : ControllerBase
 
     public FormSubmissionsController(
         FormRepository formRepo,
+        AuthRepository authRepo,
         FormSubmissionRepository submissionRepo,
         IConfiguration configuration,
         IEmailService emailService,
@@ -27,6 +29,7 @@ public class FormSubmissionsController : ControllerBase
         SubmissionAccessTokenRepository submissionAccessTokenRepository)
     {
         _formRepo = formRepo;
+        _authRepo = authRepo;
         _emailService = emailService;
         _submissionRepo = submissionRepo;
         _configuration = configuration;
@@ -375,6 +378,20 @@ public class FormSubmissionsController : ControllerBase
         existing.RowVersion++;
 
         await _submissionRepo.UpdateAsync(existing);
+
+        var ownerUser = await _authRepo.GetByIdAsync(existing.CreatedByUserId);
+
+        if (ownerUser != null && ownerUser.NotificationsEnabled && existing.Status == SubmissionStatus.Completed)
+        {
+            var frontendBaseUrl = _configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
+
+            if (string.IsNullOrWhiteSpace(frontendBaseUrl))
+                throw new InvalidOperationException("App:FrontendBaseUrl is missing.");
+
+            var submissionUrl = $"{frontendBaseUrl}/dashboard/submissions/{existing.Id}/view";
+            await _emailService.SendSubmissionCompletedEmailAsync(ownerUser.Email, submissionUrl, ownerUser.FullName);
+        }
+
         return NoContent();
     }
 

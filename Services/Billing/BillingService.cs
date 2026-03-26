@@ -1,4 +1,5 @@
 using DynamicFormBuilder.Models.Billing;
+using DynamicFormBuilder.Repositories.Billing;
 using Microsoft.Extensions.Options;
 
 namespace DynamicFormBuilder.Services.Billing;
@@ -14,11 +15,11 @@ public interface IBillingService
 public class BillingService : IBillingService
 {
     private readonly LemonOptions _options;
-    private readonly SubscriptionRepository _subscriptionRepository;
+    private readonly ISubscriptionRepository _subscriptionRepository;
 
     public BillingService(
-        IOptions<LemonOptions> options, 
-        SubscriptionRepository subscriptionRepository)
+        IOptions<LemonOptions> options,
+        ISubscriptionRepository subscriptionRepository)
     {
         _options = options.Value;
         _subscriptionRepository = subscriptionRepository;

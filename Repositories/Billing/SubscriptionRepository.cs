@@ -1,7 +1,9 @@
 using DynamicFormBuilder.Models.Billing;
 using MongoDB.Driver;
 
-public class SubscriptionRepository
+namespace DynamicFormBuilder.Repositories.Billing;
+
+public class SubscriptionRepository : ISubscriptionRepository
 {
     private readonly IMongoCollection<UserSubscription> _collection;
 

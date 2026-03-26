@@ -3,6 +3,8 @@
 public interface IEmailService
 {
     Task SendVerificationEmailAsync(string toEmail, string verifyUrl, string? fullName);
+    Task SendSubmissionCompletedEmailAsync(string toEmail, string verifyUrl, string? fullName);
+    Task SendPasswordResetEmailAsync(string toEmail, string verifyUrl, string? fullName);
 
     Task SendSubmissionSignerEmailAsync(
         string userId,

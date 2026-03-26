@@ -13,12 +13,14 @@ using System.Text.RegularExpressions;
 using OtpNet;
 using Google.Apis.Auth;
 using Microsoft.Extensions.Options;
+using DynamicFormBuilder.Services.Billing;
 
 [ApiController]
 [Route("api/auth")]
 public class AuthController : ControllerBase
 {
     private readonly AuthRepository _repo;
+    private readonly ISubscriptionService _subscriptionService;
     private readonly GoogleAuthOptions _googleOptions;
     private readonly AuthService _authService;
     private readonly IConfiguration _configuration;
@@ -27,6 +29,7 @@ public class AuthController : ControllerBase
 
     public AuthController(
         AuthRepository repo,
+        ISubscriptionService subscriptionService,
         IOptions<GoogleAuthOptions> googleOptions,
         IConfiguration configuration,
         IEmailService emailService,
@@ -34,6 +37,7 @@ public class AuthController : ControllerBase
         JwtService jwtService)
     {
         _repo = repo;
+        _subscriptionService = subscriptionService;
         _googleOptions = googleOptions.Value;
         _authService = authService;
         _configuration = configuration;
@@ -177,6 +181,8 @@ public class AuthController : ControllerBase
                 };
 
                 await _repo.CreateAsync(user);
+
+                await _subscriptionService.GetOrCreateForUserAsync(user.Id);
             }
 
             var frontendBaseUrl = _configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
@@ -224,7 +230,8 @@ public class AuthController : ControllerBase
         {
             email = user.Email,
             fullName = user.FullName,
-            twoFactorEnabled = user.TwoFactorEnabled
+            twoFactorEnabled = user.TwoFactorEnabled,
+            notificationsEnabled = user.NotificationsEnabled
         });
     }
 
@@ -304,6 +311,8 @@ public class AuthController : ControllerBase
             });
         }
 
+        await _subscriptionService.GetOrCreateForUserAsync(user.Id!);
+
         if (user.TwoFactorEnabled)
         {
             var twoFactorToken = _jwtService.GenerateTwoFactorToken(user);
@@ -322,6 +331,114 @@ public class AuthController : ControllerBase
     }
 
     [EnableRateLimiting("auth-strict")]
+    [HttpPost("forgot-password")]
+    public async Task<ActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(request.Email))
+            {
+                return BadRequest(new
+                {
+                    code = "VALIDATION_ERROR",
+                    message = "Email is required."
+                });
+            }
+
+            var email = request.Email.Trim().ToLowerInvariant();
+
+            var user = await _repo.GetByEmailAsync(email);
+
+            if (user == null || user.IsDeleted)
+            {
+                return Ok(new
+                {
+                    message = "If an account exists for this email, a password reset link has been sent."
+                });
+            }
+
+            var now = DateTime.UtcNow;
+            var rawResetToken = TokenHelper.GenerateSecureToken();
+            var resetTokenHash = TokenHelper.ComputeSha256(rawResetToken);
+
+            user.PasswordResetTokenHash = resetTokenHash;
+            user.PasswordResetTokenExpiresAtUtc = now.AddHours(1);
+            user.PasswordResetRequestedAtUtc = now;
+            user.UpdatedAtUtc = now;
+
+            await _repo.UpdateAsync(user);
+
+            var frontendBaseUrl = _configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
+
+            if (string.IsNullOrWhiteSpace(frontendBaseUrl))
+                throw new InvalidOperationException("App:FrontendBaseUrl is missing.");
+
+            var resetUrl =
+                $"{frontendBaseUrl}/reset-password?token={Uri.EscapeDataString(rawResetToken)}&email={Uri.EscapeDataString(user.Email)}";
+
+            await _emailService.SendPasswordResetEmailAsync(user.Email, resetUrl, user.FullName);
+
+            return Ok(new
+            {
+                message = "If an account exists for this email, a password reset link has been sent."
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new
+            {
+                code = "SERVER_ERROR",
+                message = ex.Message,
+                detail = ex.ToString()
+            });
+        }
+    }
+
+    [HttpPost("validate-reset-token")]
+    public async Task<ActionResult> ValidateResetToken([FromBody] ValidateResetTokenRequest request)
+    {
+        var email = request.Email?.Trim().ToLowerInvariant();
+        var token = request.Token?.Trim();
+
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(token))
+        {
+            return BadRequest(new
+            {
+                code = "VALIDATION_ERROR",
+                message = "Email and token are required."
+            });
+        }
+
+        var user = await _repo.GetByEmailAsync(email);
+        if (user == null || user.IsDeleted || string.IsNullOrWhiteSpace(user.PasswordResetTokenHash))
+        {
+            return BadRequest(new
+            {
+                code = "INVALID_RESET_REQUEST",
+                message = "Invalid or expired password reset request."
+            });
+        }
+
+        var tokenHash = TokenHelper.ComputeSha256(token);
+
+        if (!string.Equals(user.PasswordResetTokenHash, tokenHash, StringComparison.Ordinal) ||
+            !user.PasswordResetTokenExpiresAtUtc.HasValue ||
+            user.PasswordResetTokenExpiresAtUtc.Value < DateTime.UtcNow)
+        {
+            return BadRequest(new
+            {
+                code = "INVALID_RESET_REQUEST",
+                message = "Invalid or expired password reset request."
+            });
+        }
+
+        return Ok(new
+        {
+            message = "Reset token is valid."
+        });
+    }
+
+    [EnableRateLimiting("auth-strict")]
     [HttpPost("google")]
     public async Task<ActionResult<AuthResponse>> GoogleLogin([FromBody] GoogleLoginRequest request)
     {
@@ -335,6 +452,8 @@ public class AuthController : ControllerBase
 
         if (user.IsDeleted)
             throw new UnauthorizedAccessException("This account has been deleted.");
+
+        await _subscriptionService.GetOrCreateForUserAsync(user.Id!);
 
         if (user.TwoFactorEnabled)
         {
@@ -666,9 +785,9 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> SetupTwoFactor()
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        
+
         if (string.IsNullOrWhiteSpace(userId))
-                throw new ArgumentException("User id is required");
+            throw new ArgumentException("User id is required");
 
         var user = await _repo.GetByIdAsync(userId);
 
@@ -808,6 +927,27 @@ public class AuthController : ControllerBase
         await _repo.UpdateAsync(user);
 
         return Ok(new { message = "Email verified successfully." });
+    }
+
+    [Authorize]
+    [HttpPost("notifications")]
+    public async Task<IActionResult> SetNotifications([FromBody] EnableNotificationsRequest request)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        if (string.IsNullOrWhiteSpace(userId))
+            throw new ArgumentException("User id is required");
+
+        var user = await _repo.GetByIdAsync(userId);
+
+        if (user == null)
+            return Unauthorized();
+
+        user.NotificationsEnabled = request.Enabled;
+
+        await _repo.UpdateAsync(user);
+
+        return Ok(new { message = $"Notifications {(request.Enabled ? "enabled" : "disabled")}." });
     }
 
     [EnableRateLimiting("auth-strict")]
@@ -993,6 +1133,74 @@ public class AuthController : ControllerBase
         await _repo.UpdateAsync(user);
 
         return Ok();
+    }
+
+    [EnableRateLimiting("auth-strict")]
+    [HttpPost("reset-password")]
+    public async Task<ActionResult> ResetPassword([FromBody] ResetPasswordRequest request)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(request.Email))
+                return BadRequest(new { code = "VALIDATION_ERROR", message = "Email is required." });
+
+            if (string.IsNullOrWhiteSpace(request.Token))
+                return BadRequest(new { code = "VALIDATION_ERROR", message = "Token is required." });
+
+            if (string.IsNullOrWhiteSpace(request.NewPassword))
+                return BadRequest(new { code = "VALIDATION_ERROR", message = "New password is required." });
+
+            var email = request.Email.Trim().ToLowerInvariant();
+            var tokenHash = TokenHelper.ComputeSha256(request.Token);
+
+            var user = await _repo.GetByEmailAsync(email);
+
+            if (user == null || user.IsDeleted ||
+                string.IsNullOrWhiteSpace(user.PasswordResetTokenHash) ||
+                !string.Equals(user.PasswordResetTokenHash, tokenHash, StringComparison.Ordinal) ||
+                !user.PasswordResetTokenExpiresAtUtc.HasValue ||
+                user.PasswordResetTokenExpiresAtUtc.Value < DateTime.UtcNow)
+            {
+                return BadRequest(new
+                {
+                    code = "INVALID_RESET_REQUEST",
+                    message = "Invalid or expired password reset request."
+                });
+            }
+
+            if (!IsPasswordValid(request.NewPassword))
+            {
+                return BadRequest(new
+                {
+                    code = "AUTH_PASSWORD_INVALID",
+                    message = "The password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, and one special character."
+                });
+            }
+
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+            user.PasswordResetTokenHash = null;
+            user.PasswordResetTokenExpiresAtUtc = null;
+            user.PasswordResetRequestedAtUtc = null;
+            user.UpdatedAtUtc = DateTime.UtcNow;
+            user.RefreshTokens = new List<RefreshTokenDefinition>();
+
+
+            await _repo.UpdateAsync(user);
+
+            return Ok(new
+            {
+                message = "Your password has been reset successfully."
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new
+            {
+                code = "SERVER_ERROR",
+                message = ex.Message,
+                detail = ex.ToString()
+            });
+        }
     }
 
     private static bool IsPasswordValid(string password)

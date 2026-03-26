@@ -1,9 +1,10 @@
+using DynamicFormBuilder.Models;
 using DynamicFormBuilder.Models.Billing;
+using DynamicFormBuilder.Repositories.Billing;
 using DynamicFormBuilder.Services.Billing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
-using DynamicFormBuilder.Models;
 
 namespace DynamicFormBuilder.Controllers;
 
@@ -15,14 +16,14 @@ public class BillingController : ControllerBase
     private readonly IBillingService _billingService;
     private readonly BillingOverviewService _billingOverviewService;
     private readonly ISubscriptionService _subscriptionService;
-    private readonly SubscriptionRepository _subscriptionRepository;
+    private readonly ISubscriptionRepository _subscriptionRepository;
     private readonly IPlanEntitlementService _planEntitlementService;
 
     public BillingController(
         IBillingService billingService,
         ISubscriptionService subscriptionService,
         BillingOverviewService billingOverviewService,
-        SubscriptionRepository subscriptionRepository,
+        ISubscriptionRepository subscriptionRepository,
         IPlanEntitlementService planEntitlementService)
     {
         _billingService = billingService;

@@ -38,6 +38,7 @@ namespace DynamicFormBuilder.Services
             {
                 new Claim(JwtRegisteredClaimNames.Sub, user.Id),
                 new Claim(JwtRegisteredClaimNames.Email, user.Email),
+                new Claim("emailVerified", user.EmailVerified.ToString()),
                 new Claim("name", user.FullName ?? string.Empty),
                 new Claim("twoFactorEnabled", user.TwoFactorEnabled.ToString())
             };
