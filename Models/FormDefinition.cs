@@ -10,6 +10,7 @@ public class FormDefinition
 
     public string OwnerUserId { get; set; } = string.Empty;
     public string FormName { get; set; } = null!;
+    public string? AgreementContentHtml { get; set; }
     public bool Expanded { get; set; } = false;
     public string Version { get; set; } = "1.0.0";
     public DateTime CreatedAtUtc { get; set; }
@@ -22,9 +23,9 @@ public class FieldDefinition
 {
     public string FieldId { get; set; } = null!;
     public string Label { get; set; } = null!;
-    public string Type { get; set; } = "text";
+    public string Type { get; set; } = "ShortText";
     public string? SignatureType { get; set; }
-    public AssignedTo AssignedTo { get; set; } = AssignedTo.Owner;
+    public AssignedTo AssignedTo { get; set; } = AssignedTo.You;
     public AgreementSnapshot? Agreement { get; set; }
     public bool Required { get; set; } = false;
     public int? Min { get; set; }
@@ -38,6 +39,6 @@ public class FieldDefinition
 
 public enum AssignedTo
 {
-    Owner,
-    External
+    You,
+    Client
 }

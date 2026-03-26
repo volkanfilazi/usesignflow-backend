@@ -9,6 +9,9 @@ using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Text.Json.Serialization;
 using QuestPDF.Infrastructure;
+using DynamicFormBuilder.Services.Billing;
+using DynamicFormBuilder.Repositories.Billing;
+using DynamicFormBuilder.Services.Common;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -86,10 +89,24 @@ builder.Services.AddSingleton<IMongoDatabase>(sp =>
 builder.Services.AddSingleton<AuthRepository>();
 builder.Services.AddSingleton<JwtService>();
 builder.Services.AddSingleton<FormRepository>();
+builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddScoped<FormSubmissionRepository>();
 builder.Services.AddScoped<SignatureRequestRepository>();
 builder.Services.AddScoped<SubmissionAccessTokenRepository>();
 builder.Services.AddScoped<AgreementTemplateRepository>();
+builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<BillingOverviewService>();
+builder.Services.Configure<LemonOptions>(builder.Configuration.GetSection("Lemon"));
+builder.Services.AddScoped<ISubscriptionRepository, SubscriptionRepository>(); 
+builder.Services.AddScoped<BillingWebhookEventRepository>();
+builder.Services.AddScoped<ILemonPlanMapper, LemonPlanMapper>();
+builder.Services.AddScoped<ILemonWebhookVerifier, LemonWebhookVerifier>();
+builder.Services.AddScoped<ILemonWebhookProcessor, LemonWebhookProcessor>();
+builder.Services.AddScoped<IPlanEntitlementService, PlanEntitlementService>();
+builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
+builder.Services.AddScoped<IBillingService, BillingService>();
+builder.Services.AddScoped<EmailLogRepository>();
+builder.Services.AddScoped<PdfExportGuard>();
 builder.Services.AddScoped<ILegalDocumentService, LegalDocumentService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IPdfService, PdfService>();
@@ -116,6 +133,9 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.KnownIPNetworks.Clear();
     options.KnownProxies.Clear();
 });
+
+builder.Services.Configure<GoogleAuthOptions>(
+    builder.Configuration.GetSection("GoogleAuth"));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>

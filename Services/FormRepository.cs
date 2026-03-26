@@ -23,7 +23,7 @@ namespace DynamicFormBuilder.Services
         public Task<List<FormDefinition>> GetAllAsync() =>
             _forms.Find(_ => true).ToListAsync();
 
-        public Task<FormDefinition?> GetByIdAsync(string id) =>
+        public Task<FormDefinition> GetByIdAsync(string id) =>
          _forms.Find(x => x.Id == id).FirstOrDefaultAsync();
 
         public Task CreateAsync(FormDefinition form) =>
@@ -34,5 +34,10 @@ namespace DynamicFormBuilder.Services
 
         public Task DeleteAsync(string id) =>
         _forms.DeleteOneAsync(x => x.Id == id);
+
+        public async Task<long> CountByUserIdAsync(string userId)
+        {
+            return await _forms.CountDocumentsAsync(x => x.OwnerUserId == userId);
+        }
     }
 }

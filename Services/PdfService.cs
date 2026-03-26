@@ -5,6 +5,7 @@ using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
 using SixLabors.ImageSharp.Processing;
 using SixLabors.ImageSharp.Formats.Png;
+using HtmlAgilityPack;
 using ImageSharpImage = SixLabors.ImageSharp.Image;
 using ImageSharpSize = SixLabors.ImageSharp.Size;
 
@@ -56,6 +57,23 @@ public class PdfService : IPdfService
                     {
                         column.Spacing(18);
 
+                        if (!string.IsNullOrWhiteSpace(submission.AgreementContentHtml))
+                        {
+                            column.Item().Text("Agreement Content")
+                                .FontSize(14)
+                                .Bold()
+                                .FontColor(Colors.Blue.Darken2);
+
+                            column.Item()
+                                .Border(1)
+                                .BorderColor(Colors.Grey.Lighten2)
+                                .Padding(12)
+                                .Element(container =>
+                                {
+                                    RenderAgreementHtml(container, submission.AgreementContentHtml);
+                                });
+                        }
+
                         column.Item().Text("Form Details")
                             .FontSize(14)
                             .Bold()
@@ -63,10 +81,10 @@ public class PdfService : IPdfService
 
                         foreach (var field in submission.FieldsSnapshot)
                         {
-                            if (field.Type == "signaturePad")
+                            if (field.Type == "Signature")
                                 continue;
 
-                            if (field.Type == "agreement")
+                            if (field.Type == "Agreement")
                             {
                                 var agreementTitle = string.IsNullOrWhiteSpace(field.Agreement?.Title)
                                     ? field.Label
@@ -128,7 +146,7 @@ public class PdfService : IPdfService
                         }
 
                         var signatureFields = submission.FieldsSnapshot
-                            .Where(f => f.Type == "signaturePad")
+                            .Where(f => f.Type == "Signature")
                             .ToList();
 
                         if (signatureFields.Any())
@@ -295,5 +313,240 @@ public class PdfService : IPdfService
         {
             return null;
         }
+    }
+
+    private void RenderAgreementHtml(IContainer container, string html)
+    {
+        var doc = new HtmlDocument();
+        doc.LoadHtml(html);
+
+        container.Column(column =>
+        {
+            column.Spacing(8);
+
+            foreach (var node in doc.DocumentNode.ChildNodes)
+            {
+                RenderBlockNode(column, node);
+            }
+        });
+    }
+
+    private void RenderBlockNode(ColumnDescriptor column, HtmlNode node)
+    {
+        if (node.NodeType == HtmlNodeType.Text)
+        {
+            var textValue = HtmlEntity.DeEntitize(node.InnerText).Trim();
+            if (!string.IsNullOrWhiteSpace(textValue))
+            {
+                column.Item().Text(textValue).FontSize(11);
+            }
+
+            return;
+        }
+
+        switch (node.Name.ToLowerInvariant())
+        {
+            case "h2":
+                {
+                    var alignment = GetTextAlignment(node);
+
+                    ApplyAlignment(column.Item(), alignment)
+                        .Text(HtmlEntity.DeEntitize(node.InnerText.Trim()))
+                        .FontSize(20)
+                        .Bold();
+
+                    break;
+                }
+
+            case "h3":
+                {
+                    var alignment = GetTextAlignment(node);
+
+                    ApplyAlignment(column.Item(), alignment)
+                        .Text(HtmlEntity.DeEntitize(node.InnerText.Trim()))
+                        .FontSize(16)
+                        .SemiBold();
+
+                    break;
+                }
+
+            case "p":
+                RenderParagraph(column, node);
+                break;
+
+            case "ul":
+                RenderUnorderedList(column, node);
+                break;
+
+            case "ol":
+                RenderOrderedList(column, node);
+                break;
+
+            default:
+                foreach (var child in node.ChildNodes)
+                {
+                    RenderBlockNode(column, child);
+                }
+                break;
+        }
+    }
+
+    private void RenderParagraph(ColumnDescriptor col, HtmlNode node)
+    {
+        var textValue = HtmlEntity.DeEntitize(node.InnerText).Trim();
+        if (string.IsNullOrWhiteSpace(textValue))
+            return;
+
+        var alignment = GetTextAlignment(node);
+
+        ApplyAlignment(col.Item(), alignment).Text(text =>
+        {
+            text.DefaultTextStyle(x => x.FontSize(11));
+
+            foreach (var child in node.ChildNodes)
+            {
+                RenderInlineNode(text, child);
+            }
+        });
+    }
+
+    private void RenderInlineNode(TextDescriptor text, HtmlNode node)
+    {
+        if (node.NodeType == HtmlNodeType.Text)
+        {
+            var content = HtmlEntity.DeEntitize(node.InnerText);
+            if (!string.IsNullOrWhiteSpace(content))
+            {
+                text.Span(content);
+            }
+
+            return;
+        }
+
+        switch (node.Name.ToLowerInvariant())
+        {
+            case "strong":
+            case "b":
+                text.Span(HtmlEntity.DeEntitize(node.InnerText)).Bold();
+                break;
+
+            case "em":
+            case "i":
+                text.Span(HtmlEntity.DeEntitize(node.InnerText)).Italic();
+                break;
+
+            case "u":
+                text.Span(HtmlEntity.DeEntitize(node.InnerText)).Underline();
+                break;
+
+            case "a":
+                var href = node.GetAttributeValue("href", string.Empty);
+                var linkText = HtmlEntity.DeEntitize(node.InnerText);
+
+                if (!string.IsNullOrWhiteSpace(href))
+                    text.Hyperlink(href, linkText);
+                else
+                    text.Span(linkText);
+                break;
+
+            default:
+                foreach (var child in node.ChildNodes)
+                {
+                    RenderInlineNode(text, child);
+                }
+                break;
+        }
+    }
+
+    private void RenderUnorderedList(ColumnDescriptor column, HtmlNode node)
+    {
+        var items = node.Elements("li").ToList();
+
+        foreach (var li in items)
+        {
+            column.Item().Row(row =>
+            {
+                row.AutoItem().Text("• ").FontSize(11);
+
+                row.RelativeItem().Column(inner =>
+                {
+                    inner.Spacing(4);
+
+                    foreach (var child in li.ChildNodes)
+                    {
+                        if (child.Name.Equals("p", StringComparison.OrdinalIgnoreCase))
+                            RenderParagraph(inner, child);
+                        else
+                            RenderBlockNode(inner, child);
+                    }
+                });
+            });
+        }
+    }
+
+    private void RenderOrderedList(ColumnDescriptor column, HtmlNode node)
+    {
+        var items = node.Elements("li").ToList();
+
+        for (var i = 0; i < items.Count; i++)
+        {
+            var li = items[i];
+            var index = i + 1;
+
+            column.Item().Row(row =>
+            {
+                row.AutoItem().Text($"{index}. ").FontSize(11);
+
+                row.RelativeItem().Column(inner =>
+                {
+                    inner.Spacing(4);
+
+                    foreach (var child in li.ChildNodes)
+                    {
+                        if (child.Name.Equals("p", StringComparison.OrdinalIgnoreCase))
+                            RenderParagraph(inner, child);
+                        else
+                            RenderBlockNode(inner, child);
+                    }
+                });
+            });
+        }
+    }
+
+    private string GetTextAlignment(HtmlNode node)
+    {
+        var style = node.GetAttributeValue("style", string.Empty);
+
+        if (!string.IsNullOrWhiteSpace(style))
+        {
+            var lower = style.ToLowerInvariant();
+
+            if (lower.Contains("text-align: center"))
+                return "center";
+
+            if (lower.Contains("text-align: right"))
+                return "right";
+
+            if (lower.Contains("text-align: left"))
+                return "left";
+        }
+
+        var align = node.GetAttributeValue("data-text-align", string.Empty)
+            .ToLowerInvariant();
+
+        if (align == "center" || align == "right" || align == "left")
+            return align;
+
+        return "left";
+    }
+
+    private IContainer ApplyAlignment(IContainer container, string alignment)
+    {
+        return alignment switch
+        {
+            "center" => container.AlignCenter(),
+            "right" => container.AlignRight(),
+            _ => container.AlignLeft()
+        };
     }
 }

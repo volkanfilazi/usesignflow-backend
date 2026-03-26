@@ -10,6 +10,7 @@ using DynamicFormBuilder.Models;
 public class FormSubmissionsController : ControllerBase
 {
     private readonly FormRepository _formRepo;
+    private readonly AuthRepository _authRepo;
     private readonly FormSubmissionRepository _submissionRepo;
     private readonly IConfiguration _configuration;
     private readonly IEmailService _emailService;
@@ -19,6 +20,7 @@ public class FormSubmissionsController : ControllerBase
 
     public FormSubmissionsController(
         FormRepository formRepo,
+        AuthRepository authRepo,
         FormSubmissionRepository submissionRepo,
         IConfiguration configuration,
         IEmailService emailService,
@@ -27,6 +29,7 @@ public class FormSubmissionsController : ControllerBase
         SubmissionAccessTokenRepository submissionAccessTokenRepository)
     {
         _formRepo = formRepo;
+        _authRepo = authRepo;
         _emailService = emailService;
         _submissionRepo = submissionRepo;
         _configuration = configuration;
@@ -67,7 +70,7 @@ public class FormSubmissionsController : ControllerBase
             return NotFound("Form not found.");
 
         var signatureFieldIds = form.Fields
-            .Where(f => f.Type == "signaturePad")
+            .Where(f => f.Type == "Signature")
             .Select(f => f.FieldId)
             .ToHashSet();
 
@@ -76,7 +79,7 @@ public class FormSubmissionsController : ControllerBase
             var field = form.Fields.FirstOrDefault(f => f.FieldId == x.FieldId);
             var normalizedValue = x.Value;
 
-            if (field?.Type == "signaturePad")
+            if (field?.Type == "Signature")
             {
                 normalizedValue = SubmissionHelper.SaveSignatureIfNeeded(x.Value, _configuration);
             }
@@ -93,6 +96,7 @@ public class FormSubmissionsController : ControllerBase
             FormId = form.Id!,
             FormName = form.FormName,
             FormVersion = form.Version,
+            AgreementContentHtml = form.AgreementContentHtml,
             CreatedByUserId = userId,
             CreatedAtUtc = now,
             UpdatedAtUtc = now,
@@ -223,7 +227,7 @@ public class FormSubmissionsController : ControllerBase
         }
 
         var signatureFieldIds = existing.FieldsSnapshot
-            .Where(f => f.Type == "signaturePad")
+            .Where(f => f.Type == "Signature")
             .Select(f => f.FieldId)
             .ToHashSet();
 
@@ -334,7 +338,7 @@ public class FormSubmissionsController : ControllerBase
             return Forbid();
 
         var externalFieldIds = existing.FieldsSnapshot
-            .Where(f => f.AssignedTo == AssignedTo.External)
+            .Where(f => f.AssignedTo == AssignedTo.Client)
             .Select(f => f.FieldId)
             .ToHashSet();
 
@@ -346,7 +350,7 @@ public class FormSubmissionsController : ControllerBase
         {
             var normalizedValue = answer.Value;
 
-            if (existing.FieldsSnapshot.Any(f => f.FieldId == answer.FieldId && f.Type == "signaturePad"))
+            if (existing.FieldsSnapshot.Any(f => f.FieldId == answer.FieldId && f.Type == "Signature"))
             {
                 normalizedValue = SubmissionHelper.SaveSignatureIfNeeded(answer.Value, _configuration);
                 answer.Value = normalizedValue;
@@ -374,6 +378,20 @@ public class FormSubmissionsController : ControllerBase
         existing.RowVersion++;
 
         await _submissionRepo.UpdateAsync(existing);
+
+        var ownerUser = await _authRepo.GetByIdAsync(existing.CreatedByUserId);
+
+        if (ownerUser != null && ownerUser.NotificationsEnabled && existing.Status == SubmissionStatus.Completed)
+        {
+            var frontendBaseUrl = _configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
+
+            if (string.IsNullOrWhiteSpace(frontendBaseUrl))
+                throw new InvalidOperationException("App:FrontendBaseUrl is missing.");
+
+            var submissionUrl = $"{frontendBaseUrl}/dashboard/submissions/{existing.Id}/view";
+            await _emailService.SendSubmissionCompletedEmailAsync(ownerUser.Email, submissionUrl, ownerUser.FullName);
+        }
+
         return NoContent();
     }
 
@@ -398,8 +416,8 @@ public class FormSubmissionsController : ControllerBase
             return Forbid();
 
         var hasExternalWork = submission.FieldsSnapshot.Any(f =>
-        f.AssignedTo == AssignedTo.External || 
-        (f.Type == "agreement" && f.Required));
+        f.AssignedTo == AssignedTo.Client ||
+        (f.Type == "Agreement" && f.Required));
 
         if (!hasExternalWork)
             return BadRequest("This submission has no external actions.");
@@ -431,11 +449,13 @@ public class FormSubmissionsController : ControllerBase
         var fullName = User.FindFirstValue(ClaimTypes.Name) ?? string.Empty;
 
         await _emailService.SendSubmissionSignerEmailAsync(
+            userId,
             normalizedEmail,
+            request.Subject,
             accessUrl,
             fullName,
-            "Please review and sign the submission."
-        );
+            submission.FormName,
+            submissionId);
 
         return Ok(new
         {
@@ -462,6 +482,9 @@ public class FormSubmissionsController : ControllerBase
             });
 
         var submission = await _submissionRepo.GetByIdAsync(accessToken.SubmissionId);
+
+        if (submission is null)
+            return NotFound();
 
         if (submission.Status == SubmissionStatus.Completed)
             return BadRequest("This submission has already been completed.");
@@ -539,7 +562,7 @@ public class FormSubmissionsController : ControllerBase
         submission.Signatures ??= new List<FormSignature>();
 
         var signatureFieldIds = submission.FieldsSnapshot
-            .Where(f => f.Type == "signaturePad")
+            .Where(f => f.Type == "Signature")
             .Select(f => f.FieldId)
             .ToHashSet();
 
@@ -634,6 +657,9 @@ public class FormSubmissionsController : ControllerBase
 
             var existing = await _submissionRepo.GetByIdAsync(id);
 
+            if (existing is null)
+                return NotFound();
+
             if (existing.Status == SubmissionStatus.Cancelled)
                 return BadRequest("This submission has been cancelled.");
 
@@ -646,8 +672,7 @@ public class FormSubmissionsController : ControllerBase
         }
         catch (Exception ex)
         {
-            Console.WriteLine(ex.ToString());
-            return StatusCode(500, "PDF generation failed.");
+            return StatusCode(500, ex.Message);
         }
     }
 }
