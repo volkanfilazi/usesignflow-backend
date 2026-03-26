@@ -1,0 +1,26 @@
+# Visual Studio
+.vs/
+bin/
+obj/
+publish/
+wwwroot/uploads/
+appsettings.Production.json
+appsettings.Development.json
+
+# Rider
+.idea/
+
+# Node
+node_modules/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+publish/
+*.exe
+*.dll
+*.pdb
