@@ -12,6 +12,9 @@ using QuestPDF.Infrastructure;
 using DynamicFormBuilder.Services.Billing;
 using DynamicFormBuilder.Repositories.Billing;
 using DynamicFormBuilder.Services.Common;
+using DynamicFormBuilder.Repositories.Submission;
+using DynamicFormBuilder.Repositories.Auth;
+using DynamicFormBuilder.Repositories.Form;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -86,13 +89,13 @@ builder.Services.AddSingleton<IMongoDatabase>(sp =>
     return client.GetDatabase(databaseName);
 });
 
-builder.Services.AddSingleton<AuthRepository>();
+builder.Services.AddSingleton<IAuthRepository, AuthRepository>();
 builder.Services.AddSingleton<JwtService>();
-builder.Services.AddSingleton<FormRepository>();
+builder.Services.AddSingleton<IFormRepository, FormRepository>();
 builder.Services.AddSingleton<IClock, SystemClock>();
-builder.Services.AddScoped<FormSubmissionRepository>();
+builder.Services.AddScoped<IFormSubmissionRepository, FormSubmissionRepository>();
+builder.Services.AddScoped<ISubmissionAccessTokenRepository, SubmissionAccessTokenRepository>();
 builder.Services.AddScoped<SignatureRequestRepository>();
-builder.Services.AddScoped<SubmissionAccessTokenRepository>();
 builder.Services.AddScoped<AgreementTemplateRepository>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<BillingOverviewService>();

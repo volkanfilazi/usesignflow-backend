@@ -1,6 +1,8 @@
 using DynamicFormBuilder.Models.Billing;
 using DynamicFormBuilder.Models.Billing.Responses;
 using DynamicFormBuilder.Repositories.Billing;
+using DynamicFormBuilder.Repositories.Form;
+using DynamicFormBuilder.Repositories.Submission;
 
 namespace DynamicFormBuilder.Services.Billing;
 
@@ -9,16 +11,16 @@ public class BillingOverviewService
     private readonly ISubscriptionService _subscriptionService;
     private readonly IPlanEntitlementService _planEntitlementService;
 
-    private readonly FormRepository _formRepository;
-    private readonly FormSubmissionRepository _submissionRepository;
+    private readonly IFormRepository _formRepository;
+    private readonly IFormSubmissionRepository _submissionRepository;
     private readonly EmailLogRepository _emailRepo;
     private readonly IPdfService _pdfService;
 
     public BillingOverviewService(
         ISubscriptionService subscriptionService,
         IPlanEntitlementService planEntitlementService,
-        FormRepository formRepository,
-        FormSubmissionRepository submissionRepository,
+        IFormRepository formRepository,
+        IFormSubmissionRepository submissionRepository,
         EmailLogRepository emailLogRepository,
         IPdfService pdfService)
     {

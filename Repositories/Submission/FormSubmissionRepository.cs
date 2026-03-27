@@ -1,7 +1,7 @@
 using MongoDB.Driver;
-namespace DynamicFormBuilder.Services;
+namespace DynamicFormBuilder.Repositories.Submission;
 
-public class FormSubmissionRepository
+public class FormSubmissionRepository : IFormSubmissionRepository
 {
     private readonly IMongoCollection<FormSubmission> _collection;
 

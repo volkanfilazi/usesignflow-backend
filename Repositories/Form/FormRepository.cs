@@ -1,8 +1,8 @@
 ﻿using MongoDB.Driver;
 
-namespace DynamicFormBuilder.Services
+namespace DynamicFormBuilder.Repositories.Form
 {
-    public class FormRepository
+    public class FormRepository : IFormRepository
     {
         private readonly IMongoCollection<FormDefinition> _forms;
 

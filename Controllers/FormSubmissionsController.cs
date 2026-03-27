@@ -1,42 +1,41 @@
+using DynamicFormBuilder.Models;
+using DynamicFormBuilder.Repositories.Auth;
+using DynamicFormBuilder.Repositories.Form;
+using DynamicFormBuilder.Repositories.Submission;
+using DynamicFormBuilder.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
-using DynamicFormBuilder.Services;
 using System.IdentityModel.Tokens.Jwt;
-using DynamicFormBuilder.Models;
+using System.Security.Claims;
 
 [ApiController]
 [Route("api/submissions")]
 public class FormSubmissionsController : ControllerBase
 {
-    private readonly FormRepository _formRepo;
-    private readonly AuthRepository _authRepo;
-    private readonly FormSubmissionRepository _submissionRepo;
+    private readonly IFormRepository _formRepo;
+    private readonly IAuthRepository _authRepo;
     private readonly IConfiguration _configuration;
     private readonly IEmailService _emailService;
     private readonly IPdfService _pdfService;
-    private readonly SubmissionAccessTokenRepository _submissionAccessTokenRepository;
-    private readonly FormSubmissionRepository _formSubmissionRepository;
+    private readonly ISubmissionAccessTokenRepository _submissionAccessTokenRepository;
+    private readonly IFormSubmissionRepository _formSubmissionRepository;
 
     public FormSubmissionsController(
-        FormRepository formRepo,
-        AuthRepository authRepo,
-        FormSubmissionRepository submissionRepo,
+        IFormRepository formRepo,
+        IAuthRepository authRepo,
         IConfiguration configuration,
         IEmailService emailService,
         IPdfService pdfService,
-        FormSubmissionRepository formSubmissionRepository,
-        SubmissionAccessTokenRepository submissionAccessTokenRepository)
+        IFormSubmissionRepository formSubmissionRepository,
+        ISubmissionAccessTokenRepository submissionAccessTokenRepository)
     {
         _formRepo = formRepo;
         _authRepo = authRepo;
         _emailService = emailService;
-        _submissionRepo = submissionRepo;
         _configuration = configuration;
         _pdfService = pdfService;
-        _submissionRepo = formSubmissionRepository;
-        _submissionAccessTokenRepository = submissionAccessTokenRepository;
         _formSubmissionRepository = formSubmissionRepository;
+        _submissionAccessTokenRepository = submissionAccessTokenRepository;
     }
 
     [Authorize]
@@ -47,7 +46,7 @@ public class FormSubmissionsController : ControllerBase
         if (string.IsNullOrWhiteSpace(userId))
             return Unauthorized();
 
-        var submissions = await _submissionRepo.GetByUserIdAsync(userId);
+        var submissions = await _formSubmissionRepository.GetByUserIdAsync(userId);
 
         return Ok(submissions);
     }
@@ -97,10 +96,12 @@ public class FormSubmissionsController : ControllerBase
             FormName = form.FormName,
             FormVersion = form.Version,
             AgreementContentHtml = form.AgreementContentHtml,
+            Status = SubmissionStatus.Drafted,
+            OwnerConfirmed = false,
+            ExternalConfirmed = false,
             CreatedByUserId = userId,
             CreatedAtUtc = now,
             UpdatedAtUtc = now,
-            Status = SubmissionStatus.Pending,
             FieldsSnapshot = form.Fields.Select(f => new FieldDefinition
             {
                 FieldId = f.FieldId,
@@ -140,14 +141,14 @@ public class FormSubmissionsController : ControllerBase
         };
 
         SubmissionHelper.UpdateSubmissionStatus(submission);
-        await _submissionRepo.CreateAsync(submission);
+        await _formSubmissionRepository.CreateAsync(submission);
         return Ok(submission);
     }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<FormSubmission>> GetById(string id, [FromQuery] string? accessToken)
     {
-        var submission = await _submissionRepo.GetByIdAsync(id);
+        var submission = await _formSubmissionRepository.GetByIdAsync(id);
 
         if (submission is null)
             return NotFound();
@@ -201,7 +202,7 @@ public class FormSubmissionsController : ControllerBase
         if (string.IsNullOrWhiteSpace(userId))
             return Unauthorized();
 
-        var existing = await _submissionRepo.GetByIdAsync(id);
+        var existing = await _formSubmissionRepository.GetByIdAsync(id);
         if (existing is null)
             return NotFound();
 
@@ -215,7 +216,8 @@ public class FormSubmissionsController : ControllerBase
         {
             SubmissionStatus.Completed,
             SubmissionStatus.Cancelled,
-            SubmissionStatus.Expired
+            SubmissionStatus.Expired,
+            SubmissionStatus.Pending,
         };
 
         if (lockedStatuses.Contains(existing.Status))
@@ -256,7 +258,7 @@ public class FormSubmissionsController : ControllerBase
         existing.UpdatedAtUtc = DateTime.UtcNow;
         existing.RowVersion++;
 
-        await _submissionRepo.UpdateAsync(existing);
+        await _formSubmissionRepository.UpdateAsync(existing);
         return NoContent();
     }
 
@@ -268,7 +270,7 @@ public class FormSubmissionsController : ControllerBase
         if (string.IsNullOrWhiteSpace(userId))
             return Unauthorized();
 
-        var submission = await _submissionRepo.GetByIdAsync(submissionId);
+        var submission = await _formSubmissionRepository.GetByIdAsync(submissionId);
         if (submission is null)
             return NotFound("Submission not found.");
 
@@ -287,7 +289,7 @@ public class FormSubmissionsController : ControllerBase
         submission.Status = SubmissionStatus.Cancelled;
         submission.UpdatedAtUtc = DateTime.UtcNow;
 
-        await _submissionRepo.UpdateAsync(submission);
+        await _formSubmissionRepository.UpdateAsync(submission);
 
         await _submissionAccessTokenRepository.DeleteBySubmissionIdAsync(submission.Id!);
 
@@ -306,18 +308,12 @@ public class FormSubmissionsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Token))
             return BadRequest("Token is required.");
 
-        var existing = await _submissionRepo.GetByIdAsync(id);
+        var existing = await _formSubmissionRepository.GetByIdAsync(id);
         if (existing is null)
             return NotFound();
 
-        if (existing.Status == SubmissionStatus.Cancelled)
-            return BadRequest("This submission has been cancelled.");
-
-        if (existing.Status == SubmissionStatus.Completed)
-            return BadRequest("This submission has already been completed.");
-
-        if (existing.Status == SubmissionStatus.Expired)
-            return BadRequest("This submission has expired.");
+        if (existing.Status != SubmissionStatus.Pending)
+            return BadRequest("This submission is not editable.");
 
         if (existing.RowVersion != request.RowVersion)
             return Conflict("This record was changed by another user.");
@@ -326,7 +322,7 @@ public class FormSubmissionsController : ControllerBase
 
         var accessToken = await _submissionAccessTokenRepository.GetByTokenHashAsync(tokenHash);
         if (accessToken is null)
-            return NotFound("Access token not found.");
+            return Forbid();
 
         if (accessToken.IsRevoked)
             return BadRequest("Access token has been revoked.");
@@ -337,10 +333,37 @@ public class FormSubmissionsController : ControllerBase
         if (accessToken.SubmissionId != id)
             return Forbid();
 
+        var allFieldIds = existing.FieldsSnapshot
+            .Select(f => f.FieldId)
+            .ToHashSet();
+
+        var unknownFieldIds = request.Answers
+            .Where(x => !allFieldIds.Contains(x.FieldId))
+            .Select(x => x.FieldId)
+            .Distinct()
+            .ToList();
+
+        if (unknownFieldIds.Any())
+            return BadRequest("Unknown field id.");
+
         var externalFieldIds = existing.FieldsSnapshot
             .Where(f => f.AssignedTo == AssignedTo.Client)
             .Select(f => f.FieldId)
             .ToHashSet();
+
+        var invalidFieldIds = request.Answers
+            .Where(x => !externalFieldIds.Contains(x.FieldId))
+            .Select(x => x.FieldId)
+            .Distinct()
+            .ToList();
+
+        if (invalidFieldIds.Any())
+        {
+            return Forbid();
+        }
+
+        if (request.Answers is null)
+            return BadRequest("Answers are required.");
 
         var incomingAnswers = request.Answers
             .Where(x => externalFieldIds.Contains(x.FieldId))
@@ -374,10 +397,35 @@ public class FormSubmissionsController : ControllerBase
 
         SyncSignatures(existing, incomingAnswers, null, accessToken.Email);
 
+        var requiredExternalFields = existing.FieldsSnapshot
+    .Where(f => f.AssignedTo == AssignedTo.Client && f.Required)
+    .ToList();
+
+        foreach (var field in requiredExternalFields)
+        {
+            var answer = existing.Answers.FirstOrDefault(x => x.FieldId == field.FieldId);
+
+            var isEmpty = answer == null || string.IsNullOrWhiteSpace(answer.Value);
+
+            if (isEmpty)
+            {
+                return BadRequest(new
+                {
+                    code = "REQUIRED_FIELD_MISSING",
+                    message = $"Field '{field.Label}' is required.",
+                    fieldId = field.FieldId
+                });
+            }
+        }
+
+        existing.ExternalConfirmed = true;
+        existing.ExternalConfirmedAtUtc = DateTime.UtcNow;
         existing.UpdatedAtUtc = DateTime.UtcNow;
         existing.RowVersion++;
 
-        await _submissionRepo.UpdateAsync(existing);
+        SubmissionHelper.UpdateSubmissionStatus(existing);
+
+        await _formSubmissionRepository.UpdateAsync(existing);
 
         var ownerUser = await _authRepo.GetByIdAsync(existing.CreatedByUserId);
 
@@ -408,16 +456,25 @@ public class FormSubmissionsController : ControllerBase
         if (string.IsNullOrWhiteSpace(userId))
             return Unauthorized();
 
-        var submission = await _submissionRepo.GetByIdAsync(submissionId);
+        var submission = await _formSubmissionRepository.GetByIdAsync(submissionId);
         if (submission is null)
             return NotFound("Submission not found.");
 
         if (submission.CreatedByUserId != userId)
             return Forbid();
 
+        if (submission.Status == SubmissionStatus.Completed)
+            return BadRequest("This submission is already completed.");
+
+        if (submission.Status == SubmissionStatus.Cancelled)
+            return BadRequest("This submission has been cancelled.");
+
+        if (submission.OwnerConfirmed)
+            return BadRequest("This submission has already been sent.");
+
         var hasExternalWork = submission.FieldsSnapshot.Any(f =>
-        f.AssignedTo == AssignedTo.Client ||
-        (f.Type == "Agreement" && f.Required));
+            f.AssignedTo == AssignedTo.Client ||
+            (f.Type == "Agreement" && f.Required));
 
         if (!hasExternalWork)
             return BadRequest("This submission has no external actions.");
@@ -457,6 +514,16 @@ public class FormSubmissionsController : ControllerBase
             submission.FormName,
             submissionId);
 
+        submission.OwnerConfirmed = true;
+        submission.OwnerConfirmedAtUtc = DateTime.UtcNow;
+        submission.ExternalRecipientEmail = normalizedEmail;
+        submission.SentToExternalAtUtc = DateTime.UtcNow;
+        submission.UpdatedAtUtc = DateTime.UtcNow;
+        submission.RowVersion++;
+        SubmissionHelper.UpdateSubmissionStatus(submission);
+
+        await _formSubmissionRepository.UpdateAsync(submission);
+
         return Ok(new
         {
             message = "Access link sent successfully."
@@ -481,7 +548,7 @@ public class FormSubmissionsController : ControllerBase
                 Message = "This submission has been cancelled."
             });
 
-        var submission = await _submissionRepo.GetByIdAsync(accessToken.SubmissionId);
+        var submission = await _formSubmissionRepository.GetByIdAsync(accessToken.SubmissionId);
 
         if (submission is null)
             return NotFound();
@@ -544,7 +611,7 @@ public class FormSubmissionsController : ControllerBase
         if (accessToken.ExpiresAtUtc < DateTime.UtcNow)
             return BadRequest("Access token has expired.");
 
-        var submission = await _submissionRepo.GetByIdAsync(accessToken.SubmissionId);
+        var submission = await _formSubmissionRepository.GetByIdAsync(accessToken.SubmissionId);
         if (submission is null)
             return NotFound("Submission not found.");
 
@@ -618,7 +685,7 @@ public class FormSubmissionsController : ControllerBase
         if (string.IsNullOrWhiteSpace(userId))
             return Unauthorized();
 
-        var submission = await _submissionRepo.GetByIdAsync(id);
+        var submission = await _formSubmissionRepository.GetByIdAsync(id);
         if (submission is null)
             return NotFound();
 
@@ -651,11 +718,11 @@ public class FormSubmissionsController : ControllerBase
             if (accessToken.SubmissionId != id)
                 return Forbid();
 
-            var submission = await _submissionRepo.GetByIdAsync(id);
+            var submission = await _formSubmissionRepository.GetByIdAsync(id);
             if (submission is null)
                 return NotFound();
 
-            var existing = await _submissionRepo.GetByIdAsync(id);
+            var existing = await _formSubmissionRepository.GetByIdAsync(id);
 
             if (existing is null)
                 return NotFound();

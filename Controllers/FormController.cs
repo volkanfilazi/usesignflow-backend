@@ -1,8 +1,8 @@
-﻿using DynamicFormBuilder.Services;
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using DynamicFormBuilder.Services.Billing;
+using DynamicFormBuilder.Repositories.Form;
 
 namespace FormBuilderApi.Controllers;
 
@@ -10,12 +10,12 @@ namespace FormBuilderApi.Controllers;
 [Route("api/forms")]
 public class FormsController : ControllerBase
 {
-    private readonly FormRepository _repo;
+    private readonly IFormRepository _repo;
     private readonly ISubscriptionService _subscriptionService;
     private readonly IPlanEntitlementService _planEntitlementService;
 
     public FormsController(
-        FormRepository repo,
+        IFormRepository repo,
         IPlanEntitlementService planEntitlementService,
         ISubscriptionService subscriptionService)
     {
