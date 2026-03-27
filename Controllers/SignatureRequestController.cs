@@ -1,18 +1,19 @@
 using Microsoft.AspNetCore.Mvc;
 using DynamicFormBuilder.Services;
+using DynamicFormBuilder.Repositories.Submission;
 
 [ApiController]
 [Route("api/signature-requests")]
 public class SignatureRequestsController : ControllerBase
 {
     private readonly SignatureRequestRepository _signatureRepo;
-    private readonly FormSubmissionRepository _submissionRepo;
+    private readonly IFormSubmissionRepository _submissionRepo;
     private readonly IConfiguration _configuration;
 
     public SignatureRequestsController(
         SignatureRequestRepository signatureRepo,
         IConfiguration configuration,
-        FormSubmissionRepository submissionRepo)
+        IFormSubmissionRepository submissionRepo)
     {
         _signatureRepo = signatureRepo;
         _submissionRepo = submissionRepo;

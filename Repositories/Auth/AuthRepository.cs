@@ -1,9 +1,9 @@
 ﻿using DynamicFormBuilder.Models;
 using MongoDB.Driver;
 
-namespace DynamicFormBuilder.Services
+namespace DynamicFormBuilder.Repositories.Auth
 {
-    public class AuthRepository
+    public class AuthRepository : IAuthRepository
     {
         private readonly IMongoCollection<AuthDefinition> _users;
 

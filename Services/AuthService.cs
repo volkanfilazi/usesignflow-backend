@@ -3,15 +3,16 @@ namespace DynamicFormBuilder.Services
     using DynamicFormBuilder.Models;
     using DynamicFormBuilder.Services.Billing;
     using DynamicFormBuilder.Models.Billing;
+    using DynamicFormBuilder.Repositories.Auth;
 
     public class AuthService
     {
-        private readonly AuthRepository _repo;
+        private readonly IAuthRepository _repo;
         private readonly ISubscriptionService _subscriptionService;
         private readonly IBillingService _billingService;
 
         public AuthService(
-            AuthRepository repo, 
+            IAuthRepository repo, 
             ISubscriptionService subscriptionService,
             IBillingService billingService)
         {

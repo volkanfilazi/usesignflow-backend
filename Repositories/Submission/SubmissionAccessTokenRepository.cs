@@ -1,7 +1,7 @@
 using MongoDB.Driver;
-namespace DynamicFormBuilder.Services;
+namespace DynamicFormBuilder.Repositories.Submission;
 
-public class SubmissionAccessTokenRepository
+public class SubmissionAccessTokenRepository : ISubmissionAccessTokenRepository
 {
     private readonly IMongoCollection<SubmissionAccessToken> _collection;
 

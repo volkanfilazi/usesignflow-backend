@@ -8,21 +8,19 @@ public static class SubmissionHelper
             return;
         }
 
-        var requiredFields = submission.FieldsSnapshot
-            .Where(f => f.Required)
-            .ToList();
-
-        if (!requiredFields.Any())
+        if (!submission.OwnerConfirmed)
         {
-            submission.Status = SubmissionStatus.Completed;
+            submission.Status = SubmissionStatus.Drafted;
             return;
         }
 
-        var allRequiredCompleted = requiredFields.All(field => IsFieldCompleted(field, submission));
+        if (submission.OwnerConfirmed && !submission.ExternalConfirmed)
+        {
+            submission.Status = SubmissionStatus.Pending;
+            return;
+        }
 
-        submission.Status = allRequiredCompleted
-            ? SubmissionStatus.Completed
-            : SubmissionStatus.Pending;
+        submission.Status = SubmissionStatus.Completed;
     }
 
     private static bool IsFieldCompleted(FieldDefinition field, FormSubmission submission)

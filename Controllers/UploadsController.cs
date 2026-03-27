@@ -1,22 +1,22 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
-using DynamicFormBuilder.Services;
 using System.IdentityModel.Tokens.Jwt;
 using DynamicFormBuilder.Models;
 using SixLabors.ImageSharp.Processing;
 using SixLabors.ImageSharp.Formats.Png;
 using ImageSharpImage = SixLabors.ImageSharp.Image;
 using ImageSharpSize = SixLabors.ImageSharp.Size;
+using DynamicFormBuilder.Repositories.Submission;
 
 [ApiController]
 [Route("api/uploads")]
 public class UploadsController : ControllerBase
 {
     private readonly IConfiguration _configuration;
-    private readonly SubmissionAccessTokenRepository _submissionAccessTokenRepository;
+    private readonly ISubmissionAccessTokenRepository _submissionAccessTokenRepository;
 
-    public UploadsController(IConfiguration configuration, SubmissionAccessTokenRepository submissionAccessTokenRepository)
+    public UploadsController(IConfiguration configuration, ISubmissionAccessTokenRepository submissionAccessTokenRepository)
     {
         _configuration = configuration;
         _submissionAccessTokenRepository = submissionAccessTokenRepository;

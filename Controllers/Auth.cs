@@ -14,12 +14,13 @@ using OtpNet;
 using Google.Apis.Auth;
 using Microsoft.Extensions.Options;
 using DynamicFormBuilder.Services.Billing;
+using DynamicFormBuilder.Repositories.Auth;
 
 [ApiController]
 [Route("api/auth")]
 public class AuthController : ControllerBase
 {
-    private readonly AuthRepository _repo;
+    private readonly IAuthRepository _repo;
     private readonly ISubscriptionService _subscriptionService;
     private readonly GoogleAuthOptions _googleOptions;
     private readonly AuthService _authService;
@@ -28,7 +29,7 @@ public class AuthController : ControllerBase
     private readonly JwtService _jwtService;
 
     public AuthController(
-        AuthRepository repo,
+        IAuthRepository repo,
         ISubscriptionService subscriptionService,
         IOptions<GoogleAuthOptions> googleOptions,
         IConfiguration configuration,
