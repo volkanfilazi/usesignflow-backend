@@ -544,8 +544,8 @@ public class FormSubmissionsController : ControllerBase
             }
         }
 
-        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
-        var userAgent = Request.Headers.UserAgent.ToString();
+        var ip = HttpContext?.Connection.RemoteIpAddress?.ToString();
+        var userAgent = Request?.Headers.UserAgent.ToString();
 
         var requestMetadata = new RequestMetadata
         {
