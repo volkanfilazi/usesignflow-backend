@@ -72,4 +72,5 @@ public class UpdateSubmissionByAccessTokenRequest
     public string Token { get; set; } = string.Empty;
     public int RowVersion { get; set; }
     public List<FormAnswerDto> Answers { get; set; } = new();
+    public bool? AgreementAccepted { get; set; }
 }

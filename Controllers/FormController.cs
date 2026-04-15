@@ -117,6 +117,7 @@ public class FormsController : ControllerBase
         existing.FormName = updated.FormName;
         existing.AgreementContentHtml = updated.AgreementContentHtml;
         existing.Expanded = updated.Expanded;
+        existing.RequiresVerification = updated.RequiresVerification;
         existing.Version = updated.Version;
         existing.Fields = updated.Fields;
         existing.UpdatedAtUtc = DateTime.UtcNow;

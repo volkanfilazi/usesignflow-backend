@@ -1,4 +1,5 @@
 ﻿using DynamicFormBuilder.Controllers;
+using DynamicFormBuilder.Models.Submission;
 using DynamicFormBuilder.Repositories.Auth;
 using DynamicFormBuilder.Repositories.Billing;
 using DynamicFormBuilder.Repositories.Form;
@@ -17,6 +18,8 @@ namespace DynamicFormBuilder.Tests.Controllers;
 public class SubmissionsControllerTests
 {
     private readonly Mock<IFormRepository> _formRepo = new();
+    private readonly Mock<ISubmissionPdfFactory> _submissionPdfFactory = new();
+    private readonly Mock<ISubmissionSettingsRepository> _submissionSettingsRepository = new();
     private readonly Mock<IFormSubmissionRepository> _submissionRepo = new();
     private readonly Mock<ISubmissionAccessTokenRepository> _submissionAccessTokenRepo = new();
     private readonly Mock<IAuthRepository> _authRepo = new();
@@ -40,13 +43,15 @@ public class SubmissionsControllerTests
     {
         return new FormSubmissionsController(
             formRepo: _formRepo.Object,
-        authRepo: _authRepo.Object,
-        configuration: _configuration,
-        emailService: _emailService.Object,
-        pdfService: _pdfService.Object,
-        formSubmissionRepository: _submissionRepo.Object,
-        submissionAccessTokenRepository: _submissionAccessTokenRepo.Object
-        );
+            submissionPdfFactory: _submissionPdfFactory.Object,
+            submissionSettingsRepository: _submissionSettingsRepository.Object,
+            authRepo: _authRepo.Object,
+            configuration: _configuration,
+            emailService: _emailService.Object,
+            pdfService: _pdfService.Object,
+            formSubmissionRepository: _submissionRepo.Object,
+            submissionAccessTokenRepository: _submissionAccessTokenRepo.Object
+            );
     }
 
     private static FormSubmission CreatePendingSubmission()

@@ -21,16 +21,21 @@ public class LemonWebhookController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Handle()
     {
-        using var reader = new StreamReader(Request.Body);
-        var rawBody = await reader.ReadToEndAsync();
+        try
+        {
+            using var reader = new StreamReader(Request.Body);
+            var rawBody = await reader.ReadToEndAsync();
 
-        var signature = Request.Headers["X-Signature"].FirstOrDefault();
+            var signature = Request.Headers["X-Signature"].FirstOrDefault();
 
-        if (!_verifier.IsValid(rawBody, signature))
-            return Unauthorized();
+            if (!_verifier.IsValid(rawBody, signature))
+                return Unauthorized("Invalid signature");
 
-        await _processor.ProcessAsync(rawBody);
-
-        return Ok();
+            return Ok("controller-ok");
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ex.ToString());
+        }
     }
 }

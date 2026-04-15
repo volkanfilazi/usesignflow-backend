@@ -1,20 +1,24 @@
+using DynamicFormBuilder.Models.Email;
+using DynamicFormBuilder.Repositories.Auth;
+using DynamicFormBuilder.Repositories.Billing;
+using DynamicFormBuilder.Repositories.Branding;
+using DynamicFormBuilder.Repositories.Form;
+using DynamicFormBuilder.Repositories.Submission;
 using DynamicFormBuilder.Services;
+using DynamicFormBuilder.Services.Background;
+using DynamicFormBuilder.Services.Billing;
+using DynamicFormBuilder.Services.Common;
+using DynamicFormBuilder.Services.Submission;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
-using Microsoft.Extensions.FileProviders;
-using System.Text;
-using Microsoft.AspNetCore.HttpOverrides;
-using System.Threading.RateLimiting;
-using Microsoft.AspNetCore.RateLimiting;
-using System.Text.Json.Serialization;
 using QuestPDF.Infrastructure;
-using DynamicFormBuilder.Services.Billing;
-using DynamicFormBuilder.Repositories.Billing;
-using DynamicFormBuilder.Services.Common;
-using DynamicFormBuilder.Repositories.Submission;
-using DynamicFormBuilder.Repositories.Auth;
-using DynamicFormBuilder.Repositories.Form;
+using System.Text;
+using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -93,8 +97,15 @@ builder.Services.AddSingleton<IAuthRepository, AuthRepository>();
 builder.Services.AddSingleton<JwtService>();
 builder.Services.AddSingleton<IFormRepository, FormRepository>();
 builder.Services.AddSingleton<IClock, SystemClock>();
+builder.Services.AddHostedService<SubmissionReminderBackgroundService>();
 builder.Services.AddScoped<IFormSubmissionRepository, FormSubmissionRepository>();
 builder.Services.AddScoped<ISubmissionAccessTokenRepository, SubmissionAccessTokenRepository>();
+builder.Services.AddScoped<ISubmissionSettingsRepository, SubmissionSettingsRepository>();
+builder.Services.AddScoped<IOneTimeCodeRepository, OneTimeCodeRepository>();
+builder.Services.AddScoped<IPdfBrandingSettingsRepository, PdfBrandingSettingsRepository>();
+builder.Services.AddScoped<IPdfBrandingResolver, PdfBrandingResolver>();
+builder.Services.AddScoped<ISubmissionPdfFactory, SubmissionPdfFactory>();
+builder.Services.AddScoped<ISubmissionReminderService, SubmissionReminderService>();
 builder.Services.AddScoped<SignatureRequestRepository>();
 builder.Services.AddScoped<AgreementTemplateRepository>();
 builder.Services.AddScoped<AuthService>();
@@ -139,6 +150,9 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 
 builder.Services.Configure<GoogleAuthOptions>(
     builder.Configuration.GetSection("GoogleAuth"));
+
+builder.Services.Configure<EmailSettings>(
+    builder.Configuration.GetSection("Email"));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>

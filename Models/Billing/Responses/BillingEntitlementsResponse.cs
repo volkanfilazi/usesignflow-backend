@@ -9,4 +9,7 @@ public class BillingEntitlementsResponse
     public bool CanExportPdf { get; set; }
     public bool CanSendEmail { get; set; }
     public bool CanRemoveBranding { get; set; }
+    public bool CanUseCustomLogo { get; set; }
+    public bool CanUseBrandColor { get; set; }
+    public bool CanShowCompanyDetailsInPdf { get; set; }
 }

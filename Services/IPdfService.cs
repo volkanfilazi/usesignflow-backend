@@ -1,5 +1,7 @@
+using DynamicFormBuilder.Models.Pdf;
+
 public interface IPdfService
 {
-    Task<byte[]> GenerateSubmissionPdfAsync(FormSubmission submission);
+    Task<byte[]> GenerateSubmissionPdfAsync(GenerateSubmissionPdfRequest request);
 }
 
