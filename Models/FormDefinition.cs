@@ -12,6 +12,7 @@ public class FormDefinition
     public string FormName { get; set; } = null!;
     public string? AgreementContentHtml { get; set; }
     public bool Expanded { get; set; } = false;
+    public bool RequiresVerification { get; set; } = false;
     public string Version { get; set; } = "1.0.0";
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? UpdatedAtUtc { get; set; }

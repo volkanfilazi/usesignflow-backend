@@ -1,20 +1,22 @@
 ﻿using DynamicFormBuilder.Models;
+using DynamicFormBuilder.Repositories.Auth;
+using DynamicFormBuilder.Repositories.Submission;
 using DynamicFormBuilder.Services;
+using DynamicFormBuilder.Services.Billing;
+using Google.Apis.Auth;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using OtpNet;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Identity;
 using System.Text.RegularExpressions;
-using OtpNet;
-using Google.Apis.Auth;
-using Microsoft.Extensions.Options;
-using DynamicFormBuilder.Services.Billing;
-using DynamicFormBuilder.Repositories.Auth;
+using static QRCoder.PayloadGenerator;
 
 [ApiController]
 [Route("api/auth")]
@@ -22,6 +24,8 @@ public class AuthController : ControllerBase
 {
     private readonly IAuthRepository _repo;
     private readonly ISubscriptionService _subscriptionService;
+    private readonly ISubmissionAccessTokenRepository _submissionAccessTokenRepository;
+    private readonly IOneTimeCodeRepository _oneTimeCodeRepository;
     private readonly GoogleAuthOptions _googleOptions;
     private readonly AuthService _authService;
     private readonly IConfiguration _configuration;
@@ -31,6 +35,8 @@ public class AuthController : ControllerBase
     public AuthController(
         IAuthRepository repo,
         ISubscriptionService subscriptionService,
+        ISubmissionAccessTokenRepository submissionAccessTokenRepository,
+        IOneTimeCodeRepository oneTimeCodeRepository,
         IOptions<GoogleAuthOptions> googleOptions,
         IConfiguration configuration,
         IEmailService emailService,
@@ -39,6 +45,8 @@ public class AuthController : ControllerBase
     {
         _repo = repo;
         _subscriptionService = subscriptionService;
+        _submissionAccessTokenRepository = submissionAccessTokenRepository;
+        _oneTimeCodeRepository = oneTimeCodeRepository;
         _googleOptions = googleOptions.Value;
         _authService = authService;
         _configuration = configuration;
@@ -192,7 +200,7 @@ public class AuthController : ControllerBase
                 throw new InvalidOperationException("App:FrontendBaseUrl is missing.");
 
             var verifyUrl =
-                $"{frontendBaseUrl}/verification-process?token={Uri.EscapeDataString(rawVerifyToken)}&email={Uri.EscapeDataString(user.Email)}";
+                $"{frontendBaseUrl}/verification-process?token={Uri.EscapeDataString(rawVerifyToken)}";
 
             await _emailService.SendVerificationEmailAsync(user.Email, verifyUrl, user.FullName);
 
@@ -698,6 +706,121 @@ public class AuthController : ControllerBase
                 Message = "Account could not be deleted."
             })
         };
+    }
+
+    [HttpPost("one-time-code/send")]
+    public async Task<IActionResult> Send([FromBody] SendOneTimeCodeRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.VerifyToken))
+            return BadRequest(new { message = "VerifyToken is required." });
+
+        var tokenHash = TokenHelper.ComputeSha256(request.VerifyToken);
+
+        var token = await _submissionAccessTokenRepository.GetByTokenHashAsync(tokenHash);
+
+        if (token == null || token.IsRevoked || token.ExpiresAtUtc < DateTime.UtcNow)
+            return Forbid();
+
+        var submissionId = token.SubmissionId;
+        var email = token.Email;
+        var code = Random.Shared.Next(100000, 999999).ToString();
+        var codeHash = TokenHelper.ComputeSha256(code);
+
+        await _oneTimeCodeRepository.InvalidateActiveCodesByTargetAsync(email);
+
+        await _oneTimeCodeRepository.CreateAsync(new OneTimeCode
+        {
+            SubmissionId = submissionId,
+            Target = email,
+            CodeHash = codeHash,
+            CreatedAtUtc = DateTime.UtcNow,
+            ExpiresAtUtc = DateTime.UtcNow.AddMinutes(5),
+            IsUsed = false
+        });
+
+        await _emailService.SendOneTimeCodeEmailAsync(
+            toEmail: email,
+            subject: "Your verification code",
+            preheader: "Use this code to continue.",
+            title: "Verification Code",
+            bodyText: "please use the code below to continue.",
+            verificationCode: code,
+            footerText: "This code expires in 5 minutes.",
+            fullName: null
+            );
+
+        return Ok(new
+        {
+            success = true
+        });
+    }
+
+    [EnableRateLimiting("auth-strict")]
+    [HttpPost("one-time-code/verify")]
+    public async Task<IActionResult> Verify([FromBody] VerifyOneTimeCodeRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.VerifyToken) ||
+            string.IsNullOrWhiteSpace(request.Code))
+        {
+            return BadRequest(new { message = "VerifyToken and code are required." });
+        }
+
+        var tokenHash = TokenHelper.ComputeSha256(request.VerifyToken);
+        var token = await _submissionAccessTokenRepository.GetByTokenHashAsync(tokenHash);
+
+        if (token is null || token.IsRevoked || token.ExpiresAtUtc < DateTime.UtcNow)
+            return Forbid();
+
+        var submissionId = token.SubmissionId;
+        var target = token.Email;
+
+        var record = await _oneTimeCodeRepository
+            .GetLatestActiveBySubmissionIdAndTargetAsync(
+                submissionId,
+                target.Trim());
+
+        if (record == null)
+            return BadRequest(new
+            {
+                code = "CODE_NOT_FOUND",
+                message = "Verification code not found."
+            });
+
+        if (record.IsUsed)
+            return BadRequest(new
+            {
+                code = "CODE_ALREADY_USED",
+                message = "This verification code has already been used."
+            });
+
+        if (record.ExpiresAtUtc < DateTime.UtcNow)
+            return BadRequest(new
+            {
+                code = "CODE_EXPIRED",
+                message = "This verification code has expired."
+            });
+
+        var incomingHash = TokenHelper.ComputeSha256(request.Code.Trim());
+
+        if (!string.Equals(record.CodeHash, incomingHash, StringComparison.Ordinal))
+            return BadRequest(new
+            {
+                code = "CODE_INVALID",
+                message = "The verification code is invalid."
+            });
+
+        record.IsUsed = true;
+        record.IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        record.UserAgent = Request.Headers["User-Agent"].ToString();
+        record.VerifiedAtUtc = DateTime.UtcNow;
+
+        await _oneTimeCodeRepository.UpdateAsync(record);
+
+        return Ok(new
+        {
+            success = true,
+            verifiedAtUtc = record.VerifiedAtUtc
+        });
     }
 
     [EnableRateLimiting("auth-strict")]

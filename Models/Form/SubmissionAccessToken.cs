@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using System.Drawing.Text;
 
 public class SubmissionAccessToken
 {
@@ -12,6 +13,15 @@ public class SubmissionAccessToken
     public string TokenHash { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; }
     public DateTime ExpiresAtUtc { get; set; }
+
+    public DateTime? RevokedAtUtc { get; set; }
     public DateTime? UsedAtUtc { get; set; }
     public bool IsRevoked { get; set; } = false;
+    public Purpose Purpose { get; set; } = Purpose.EditSubmission;
+}
+
+public enum Purpose
+{
+    ReadSubmission = 1,
+    EditSubmission = 2
 }

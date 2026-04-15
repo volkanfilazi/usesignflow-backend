@@ -5,4 +5,6 @@ public class FormSignature
     public string? SignedByEmail { get; set; }
     public string? SignatureUrl { get; set; }
     public DateTime? SignedAtUtc { get; set; }
+    public string? SignedFromIpAddress { get; set; }
+    public string? SignedUserAgent { get; set; }
 }

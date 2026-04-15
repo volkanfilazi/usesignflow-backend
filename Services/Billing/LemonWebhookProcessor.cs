@@ -92,13 +92,6 @@ public class LemonWebhookProcessor : ILemonWebhookProcessor
         if (await _eventRepository.ExistsAsync(eventKey))
             return;
 
-        await _eventRepository.CreateAsync(new BillingWebhookEvent
-        {
-            EventName = eventName,
-            EventIdempotencyKey = eventKey,
-            PayloadJson = rawBody
-        });
-
         switch (eventName)
         {
             case "subscription_created":
@@ -108,6 +101,13 @@ public class LemonWebhookProcessor : ILemonWebhookProcessor
                 await UpsertSubscriptionAsync(payload);
                 break;
         }
+
+        await _eventRepository.CreateAsync(new BillingWebhookEvent
+        {
+            EventName = eventName,
+            EventIdempotencyKey = eventKey,
+            PayloadJson = rawBody
+        });
     }
 
     private async Task UpsertSubscriptionAsync(LemonWebhookEnvelope payload)
