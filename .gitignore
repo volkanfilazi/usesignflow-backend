@@ -3,7 +3,7 @@
 bin/
 obj/
 publish/
-wwwroot/uploads/
+wwwroot/uploads/signatures
 appsettings.Production.json
 appsettings.Development.json
 
