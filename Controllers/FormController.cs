@@ -1,8 +1,9 @@
-﻿using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
+﻿using DynamicFormBuilder.Repositories.Form;
 using DynamicFormBuilder.Services.Billing;
-using DynamicFormBuilder.Repositories.Form;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
+using System.Security.Claims;
 
 namespace FormBuilderApi.Controllers;
 
@@ -36,13 +37,25 @@ public class FormsController : ControllerBase
         return Ok(forms);
     }
 
+    [Authorize]
     [HttpGet("{id}")]
     public async Task<ActionResult<FormDefinition>> GetById(string id)
     {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return BadRequest("id is required.");
+        }
+
+        if (!ObjectId.TryParse(id, out _))
+        {
+            return BadRequest("Invalid form id.");
+        }
+
         var form = await _repo.GetByIdAsync(id);
         return form is null ? NotFound() : Ok(form);
     }
 
+    [Authorize]
     [HttpPost]
     public async Task<ActionResult<FormDefinition>> Create([FromBody] FormDefinition form)
     {
@@ -77,6 +90,7 @@ public class FormsController : ControllerBase
             .Select(f => f.FieldId.Trim().ToLowerInvariant())
             .ToList();
 
+        //Duplicate check
         if (keys.Count != keys.Distinct().Count())
             return BadRequest("Each field 'key' must be unique within the form.");
 
@@ -89,12 +103,14 @@ public class FormsController : ControllerBase
             }
         }
 
+        //No trust, Mongodb will generate new ObjecetId
         form.Id = null;
         form.OwnerUserId = userId;
         form.CreatedAtUtc = DateTime.UtcNow;
 
         await _repo.CreateAsync(form);
-        return CreatedAtAction(nameof(GetById), new { id = form.Id }, form);
+
+        return Ok(form);
     }
 
     [HttpPut("{id}")]
