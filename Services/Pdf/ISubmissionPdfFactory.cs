@@ -1,4 +1,4 @@
-﻿namespace DynamicFormBuilder.Services
+﻿namespace DynamicFormBuilder.Services.Pdf
 {
     public interface ISubmissionPdfFactory
     {

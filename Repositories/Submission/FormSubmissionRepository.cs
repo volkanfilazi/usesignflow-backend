@@ -76,10 +76,10 @@ public class FormSubmissionRepository : IFormSubmissionRepository
             var regex = new BsonRegularExpression(escapedSearch, "i");
 
             var filters = new List<FilterDefinition<FormSubmission>>
-        {
-            Builders<FormSubmission>.Filter.Regex(x => x.FormName, regex),
+            {
+                Builders<FormSubmission>.Filter.Regex(x => x.FormName, regex),
                 Builders<FormSubmission>.Filter.Regex(x => x.ExternalRecipientEmail, regex)
-        };
+            };
 
             if (Enum.TryParse<SubmissionStatus>(search, true, out var parsedStatus))
             {
@@ -88,8 +88,15 @@ public class FormSubmissionRepository : IFormSubmissionRepository
                 );
             }
 
+            /*
+             * FormName OR Email OR Status
+             */
             var searchFilter = Builders<FormSubmission>.Filter.Or(filters);
-
+            /*
+             * CreatedByUserId == userId
+             * AND
+             * (FormName OR Email OR Status)
+             */
             filter = Builders<FormSubmission>.Filter.And(filter, searchFilter);
         }
 
@@ -155,11 +162,16 @@ public class FormSubmissionRepository : IFormSubmissionRepository
 
         if (start.HasValue)
         {
+            /*
+             Gte: Greater Than or Equal
+             &= is used to combine the existing filter with the new condition like (filterB And filterC)
+             */
             filter &= filterBuilder.Gte(x => x.CreatedAtUtc, start.Value);
         }
 
         if (end.HasValue)
         {
+            // Lt: Less Than
             filter &= filterBuilder.Lt(x => x.CreatedAtUtc, end.Value);
         }
 
@@ -197,6 +209,7 @@ public class FormSubmissionRepository : IFormSubmissionRepository
 
         var totalDays = (endUtc - startUtc).TotalDays;
 
+        // The goal is to avoid generating too many data points.
         var granularity =
             totalDays <= 60 ? "day" :
             totalDays <= 180 ? "week" :

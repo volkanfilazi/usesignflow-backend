@@ -3,7 +3,7 @@ using DynamicFormBuilder.Repositories.Branding;
 using DynamicFormBuilder.Repositories.Submission;
 using DynamicFormBuilder.Services.Billing;
 
-namespace DynamicFormBuilder.Services
+namespace DynamicFormBuilder.Services.Pdf
 {
     public class SubmissionPdfFactory : ISubmissionPdfFactory
     {

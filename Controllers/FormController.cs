@@ -113,6 +113,7 @@ public class FormsController : ControllerBase
         return Ok(form);
     }
 
+    [Authorize]
     [HttpPut("{id}")]
     public async Task<IActionResult> Update(string id, [FromBody] FormDefinition updated)
     {
@@ -142,9 +143,13 @@ public class FormsController : ControllerBase
         return NoContent();
     }
 
+    [Authorize]
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id)
     {
+        if (string.IsNullOrWhiteSpace(id))
+            return BadRequest("id is required.");
+
         var existing = await _repo.GetByIdAsync(id);
         if (existing is null) return NotFound();
 
