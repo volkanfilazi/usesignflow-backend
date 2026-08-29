@@ -6,6 +6,7 @@ using DynamicFormBuilder.Repositories.Auth;
 using DynamicFormBuilder.Repositories.Form;
 using DynamicFormBuilder.Repositories.Submission;
 using DynamicFormBuilder.Services;
+using DynamicFormBuilder.Services.Pdf;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json.Linq;
@@ -109,6 +110,9 @@ public class FormSubmissionsController : ControllerBase
         return Ok(trend);
     }
 
+    /*
+     this area for internal users to create a new submission for a form.
+     */
     [Authorize]
     [HttpPost]
     public async Task<ActionResult<FormSubmission>> Create([FromBody] CreateFormSubmissionRequest request)
@@ -436,6 +440,233 @@ public class FormSubmissionsController : ControllerBase
         });
     }
 
+    // Sending an access link to an external recipient for a submission || send a completed submission pdf
+    [Authorize]
+    [HttpPost("{submissionId}/send-to-external")]
+    public async Task<ActionResult> SendToExternal(
+    string submissionId,
+    [FromBody] SendSubmissionAccessTokenRequest request)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized();
+
+        var submission = await _formSubmissionRepository.GetByIdAsync(submissionId);
+        if (submission is null)
+            return NotFound();
+
+        if (submission.CreatedByUserId != userId)
+            return Forbid();
+
+        if (submission.Status is SubmissionStatus.Cancelled or SubmissionStatus.Expired)
+        {
+            return BadRequest(new ApiError
+            {
+                Code = "SUBMISSION_LOCKED",
+                Message = "This submission cannot be sent."
+            });
+        }
+
+        var missingOwnerRequired = SubmissionHelper
+            .GetMissingRequiredFields(submission, AssignedTo.You);
+
+        if (missingOwnerRequired.Any())
+        {
+            return BadRequest(new ApiError
+            {
+                Code = "OWNER_FIELDS_INCOMPLETE",
+                Message = "Owner required fields must be completed before sending."
+            });
+        }
+
+        var nowUtc = DateTime.UtcNow;
+
+        submission.OwnerConfirmed = true;
+        submission.OwnerConfirmedAtUtc = nowUtc;
+        submission.UpdatedAtUtc = nowUtc;
+        submission.RowVersion++;
+
+        var hasClientStep = SubmissionHelper.HasClientStep(submission);
+
+        if (string.IsNullOrWhiteSpace(request.Email))
+            return BadRequest("Email is required.");
+
+        var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        var fullName = User.FindFirstValue(ClaimTypes.Name) ?? string.Empty;
+
+
+        // If client doesnt have any steps to completed, we can send the completed PDF directly to the external recipient.
+        if (!hasClientStep)
+        {
+            submission.ExternalRecipientEmail = normalizedEmail;
+            submission.SentToExternalAtUtc = null;
+
+            SubmissionHelper.DisableReminder(submission);
+            SubmissionHelper.UpdateSubmissionStatus(submission);
+
+            await _formSubmissionRepository.UpdateAsync(submission);
+
+            var pdfBytes = await _submissionPdfFactory.GenerateAsync(submission);
+
+            await _emailService.SendCompletedSubmissionPdfEmailAsync(
+                userId,
+                normalizedEmail,
+                request.Subject,
+                fullName,
+                submission.FormName,
+                pdfBytes,
+                submissionId);
+
+            return Ok(new
+            {
+                message = "Completed submission PDF sent successfully."
+            });
+        }
+
+        await _submissionAccessTokenRepository.RevokeActiveTokensBySubmissionIdAsync(submissionId);
+        var settings = await _submissionSettingsRepository.GetByUserIdAsync(userId);
+
+        var tokenLifetimeDays = settings?.DefaultAccessTokenLifetimeDays ?? 3;
+        var reminderEnabled = settings?.ReminderEnabledByDefault ?? false;
+        var reminderIntervalDays = settings?.DefaultReminderIntervalDays ?? 3;
+        var maxReminderCount = settings?.MaxReminderCount ?? 3;
+
+        var rawAccessToken = TokenHelper.GenerateSecureToken();
+        var accessTokenHash = TokenHelper.ComputeSha256(rawAccessToken);
+
+        var accessToken = new SubmissionAccessToken
+        {
+            SubmissionId = submission.Id!,
+            Email = normalizedEmail,
+            TokenHash = accessTokenHash,
+            CreatedAtUtc = nowUtc,
+            ExpiresAtUtc = nowUtc.AddDays(tokenLifetimeDays),
+            Purpose = Purpose.EditSubmission
+        };
+
+        SubmissionHelper.ApplyReminderSettings(
+            submission,
+            reminderEnabled,
+            reminderIntervalDays,
+            maxReminderCount,
+            nowUtc
+            );
+
+        await _submissionAccessTokenRepository.CreateAsync(accessToken);
+
+        var frontendBaseUrl = _configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(frontendBaseUrl))
+            throw new InvalidOperationException("App:FrontendBaseUrl is missing.");
+
+        var accessUrl =
+            $"{frontendBaseUrl}/submission-access?token={Uri.EscapeDataString(rawAccessToken)}";
+
+        await _emailService.SendSubmissionSignerEmailAsync(
+            userId,
+            normalizedEmail,
+            request.Subject,
+            accessUrl,
+            fullName,
+            submission.FormName,
+            submissionId);
+
+        submission.ExternalRecipientEmail = normalizedEmail;
+        submission.SentToExternalAtUtc = nowUtc;
+
+        SubmissionHelper.UpdateSubmissionStatus(submission);
+        await _formSubmissionRepository.UpdateAsync(submission);
+
+        return Ok(new
+        {
+            message = "Access link sent successfully."
+        });
+    }
+
+    // Resolving access for external users using the access token to determine if they can access the submission and if they are authenticated.
+    [AllowAnonymous]
+    [HttpPost("access/resolve")]
+    public async Task<ActionResult<ResolveSubmissionAccessResponse>> ResolveSubmissionAccess(
+    [FromBody] ResolveSubmissionAccessRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Token))
+            return BadRequest(new ApiError
+            {
+                Code = "TOKEN_REQUIRED",
+                Message = "Token is required."
+            });
+
+        var tokenHash = TokenHelper.ComputeSha256(request.Token);
+
+        var accessToken = await _submissionAccessTokenRepository.GetByTokenHashAsync(tokenHash);
+        if (accessToken is null)
+            return BadRequest(new ApiError
+            {
+                Code = "SUBMISSION_CANCELLED",
+                Message = "This submission has been cancelled."
+            });
+
+        var submission = await _formSubmissionRepository.GetByIdAsync(accessToken.SubmissionId);
+
+        if (submission is null)
+            return NotFound();
+
+        if (submission.Status == SubmissionStatus.Completed)
+            return BadRequest(new ApiError
+            {
+                Code = "SUBMISSION_COMPLETED",
+                Message = "This submission has already been completed."
+            });
+
+        if (submission.Status == SubmissionStatus.Cancelled)
+            return BadRequest(new ApiError
+            {
+                Code = "SUBMISSION_COMPLETED",
+                Message = "This submission has been cancelled."
+            });
+
+        if (submission.Status == SubmissionStatus.Expired)
+            return BadRequest(new ApiError
+            {
+                Code = "SUBMISSION_EXPIRED",
+                Message = "This submission has expired."
+            });
+
+        if (accessToken.IsRevoked)
+            return BadRequest(new ApiError
+            {
+                Code = "TOKEN_REVOKED",
+                Message = "Access token has been revoked."
+            });
+
+        if (accessToken.ExpiresAtUtc < DateTime.UtcNow)
+            return BadRequest(new ApiError
+            {
+                Code = "TOKEN_EXPIRED",
+                Message = "Access token has expired."
+            });
+
+        var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var currentUserEmail = User.FindFirstValue(ClaimTypes.Email);
+
+        var isAuthenticated = !string.IsNullOrWhiteSpace(currentUserId);
+        var isEmailMatch =
+            !string.IsNullOrWhiteSpace(currentUserEmail) &&
+            string.Equals(
+                currentUserEmail.Trim(),
+                accessToken.Email.Trim(),
+                StringComparison.OrdinalIgnoreCase);
+
+        return Ok(new ResolveSubmissionAccessResponse
+        {
+            SubmissionId = submission.Id!,
+            Email = accessToken.Email,
+            RequiresVerification = submission.RequiresVerification,
+            IsAuthenticated = isAuthenticated,
+            IsEmailMatch = isEmailMatch
+        });
+    }
+
+    // External users can update their submission using the access token.
     [AllowAnonymous]
     [HttpPut("access/{id}")]
     public async Task<IActionResult> UpdateByAccessToken(
@@ -638,14 +869,14 @@ public class FormSubmissionsController : ControllerBase
 
             if (!string.IsNullOrWhiteSpace(normalizedEmail))
             {
-               await _emailService.SendCompletedSubmissionPdfEmailAsync(
-               String.Empty,
-               normalizedEmail,
-               $"Completed PDF - {existing.FormName}",
-               string.Empty,
-               existing.FormName,
-               pdfBytes,
-               existing.Id);
+                await _emailService.SendCompletedSubmissionPdfEmailAsync(
+                String.Empty,
+                normalizedEmail,
+                $"Completed PDF - {existing.FormName}",
+                string.Empty,
+                existing.FormName,
+                pdfBytes,
+                existing.Id);
             }
 
             return Ok(new
@@ -655,146 +886,6 @@ public class FormSubmissionsController : ControllerBase
         }
 
         return NoContent();
-    }
-
-    [Authorize]
-    [HttpPost("{submissionId}/send-for-signature")]
-    public async Task<ActionResult> SendToSigner(
-    string submissionId,
-    [FromBody] SendSubmissionAccessTokenRequest request)
-    {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (string.IsNullOrWhiteSpace(userId))
-            return Unauthorized();
-
-        var submission = await _formSubmissionRepository.GetByIdAsync(submissionId);
-        if (submission is null)
-            return NotFound();
-
-        if (submission.CreatedByUserId != userId)
-            return Forbid();
-
-        if (submission.Status is SubmissionStatus.Cancelled or SubmissionStatus.Expired)
-        {
-            return BadRequest(new ApiError
-            {
-                Code = "SUBMISSION_LOCKED",
-                Message = "This submission cannot be sent."
-            });
-        }
-
-        var missingOwnerRequired = SubmissionHelper
-            .GetMissingRequiredFields(submission, AssignedTo.You);
-
-        if (missingOwnerRequired.Any())
-        {
-            return BadRequest(new ApiError
-            {
-                Code = "OWNER_FIELDS_INCOMPLETE",
-                Message = "Owner required fields must be completed before sending."
-            });
-        }
-
-        var nowUtc = DateTime.UtcNow;
-
-        submission.OwnerConfirmed = true;
-        submission.OwnerConfirmedAtUtc = nowUtc;
-        submission.UpdatedAtUtc = nowUtc;
-        submission.RowVersion++;
-
-        var hasClientStep = SubmissionHelper.HasClientStep(submission);
-
-        if (string.IsNullOrWhiteSpace(request.Email))
-            return BadRequest("Email is required.");
-
-        var normalizedEmail = request.Email.Trim().ToLowerInvariant();
-        var fullName = User.FindFirstValue(ClaimTypes.Name) ?? string.Empty;
-
-
-        if (!hasClientStep)
-        {
-            submission.ExternalRecipientEmail = normalizedEmail;
-            submission.SentToExternalAtUtc = null;
-
-            SubmissionHelper.DisableReminder(submission);
-            SubmissionHelper.UpdateSubmissionStatus(submission);
-
-            await _formSubmissionRepository.UpdateAsync(submission);
-
-            var pdfBytes = await _submissionPdfFactory.GenerateAsync(submission);
-
-            await _emailService.SendCompletedSubmissionPdfEmailAsync(
-                userId,
-                normalizedEmail,
-                request.Subject,
-                fullName,
-                submission.FormName,
-                pdfBytes,
-                submissionId);
-
-            return Ok(new
-            {
-                message = "Completed submission PDF sent successfully."
-            });
-        }
-
-        await _submissionAccessTokenRepository.RevokeActiveTokensBySubmissionIdAsync(submissionId);
-        var settings = await _submissionSettingsRepository.GetByUserIdAsync(userId);
-
-        var tokenLifetimeDays = settings?.DefaultAccessTokenLifetimeDays ?? 3;
-        var reminderEnabled = settings?.ReminderEnabledByDefault ?? false;
-        var reminderIntervalDays = settings?.DefaultReminderIntervalDays ?? 3;
-        var maxReminderCount = settings?.MaxReminderCount ?? 3;
-
-        var rawAccessToken = TokenHelper.GenerateSecureToken();
-        var accessTokenHash = TokenHelper.ComputeSha256(rawAccessToken);
-
-        var accessToken = new SubmissionAccessToken
-        {
-            SubmissionId = submission.Id!,
-            Email = normalizedEmail,
-            TokenHash = accessTokenHash,
-            CreatedAtUtc = nowUtc,
-            ExpiresAtUtc = nowUtc.AddDays(tokenLifetimeDays),
-            Purpose = Purpose.EditSubmission
-        };
-
-        SubmissionHelper.ApplyReminderSettings(
-            submission,
-            reminderEnabled,
-            reminderIntervalDays,
-            maxReminderCount,
-            nowUtc
-            );
-
-        await _submissionAccessTokenRepository.CreateAsync(accessToken);
-
-        var frontendBaseUrl = _configuration["App:FrontendBaseUrl"]?.TrimEnd('/');
-        if (string.IsNullOrWhiteSpace(frontendBaseUrl))
-            throw new InvalidOperationException("App:FrontendBaseUrl is missing.");
-
-        var accessUrl =
-            $"{frontendBaseUrl}/submission-access?token={Uri.EscapeDataString(rawAccessToken)}";
-
-        await _emailService.SendSubmissionSignerEmailAsync(
-            userId,
-            normalizedEmail,
-            request.Subject,
-            accessUrl,
-            fullName,
-            submission.FormName,
-            submissionId);
-
-        submission.ExternalRecipientEmail = normalizedEmail;
-        submission.SentToExternalAtUtc = nowUtc;
-
-        SubmissionHelper.UpdateSubmissionStatus(submission);
-        await _formSubmissionRepository.UpdateAsync(submission);
-
-        return Ok(new
-        {
-            message = "Access link sent successfully."
-        });
     }
 
     [HttpGet("verification-pdf-access")]
@@ -833,89 +924,6 @@ public class FormSubmissionsController : ControllerBase
         {
             SubmissionId = submission.Id!,
             RequiresVerification = submission.RequiresVerification
-        });
-    }
-
-    [AllowAnonymous]
-    [HttpPost("access/resolve")]
-    public async Task<ActionResult<ResolveSubmissionAccessResponse>> ResolveSubmissionAccess(
-        [FromBody] ResolveSubmissionAccessRequest request)
-    {
-        if (string.IsNullOrWhiteSpace(request.Token))
-            return BadRequest(new ApiError
-            {
-                Code = "TOKEN_REQUIRED",
-                Message = "Token is required."
-            });
-
-        var tokenHash = TokenHelper.ComputeSha256(request.Token);
-
-        var accessToken = await _submissionAccessTokenRepository.GetByTokenHashAsync(tokenHash);
-        if (accessToken is null)
-            return BadRequest(new ApiError
-            {
-                Code = "SUBMISSION_CANCELLED",
-                Message = "This submission has been cancelled."
-            });
-
-        var submission = await _formSubmissionRepository.GetByIdAsync(accessToken.SubmissionId);
-
-        if (submission is null)
-            return NotFound();
-
-        if (submission.Status == SubmissionStatus.Completed)
-            return BadRequest(new ApiError
-            {
-                Code = "SUBMISSION_COMPLETED",
-                Message = "This submission has already been completed."
-            });
-
-        if (submission.Status == SubmissionStatus.Cancelled)
-            return BadRequest(new ApiError
-            {
-                Code = "SUBMISSION_COMPLETED",
-                Message = "This submission has been cancelled."
-            });
-
-        if (submission.Status == SubmissionStatus.Expired)
-            return BadRequest(new ApiError
-            {
-                Code = "SUBMISSION_EXPIRED",
-                Message = "This submission has expired."
-            });
-
-        if (accessToken.IsRevoked)
-            return BadRequest(new ApiError
-            {
-                Code = "TOKEN_REVOKED",
-                Message = "Access token has been revoked."
-            });
-
-        if (accessToken.ExpiresAtUtc < DateTime.UtcNow)
-            return BadRequest(new ApiError
-            {
-                Code = "TOKEN_EXPIRED",
-                Message = "Access token has expired."
-            });
-
-        var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var currentUserEmail = User.FindFirstValue(ClaimTypes.Email);
-
-        var isAuthenticated = !string.IsNullOrWhiteSpace(currentUserId);
-        var isEmailMatch =
-            !string.IsNullOrWhiteSpace(currentUserEmail) &&
-            string.Equals(
-                currentUserEmail.Trim(),
-                accessToken.Email.Trim(),
-                StringComparison.OrdinalIgnoreCase);
-
-        return Ok(new ResolveSubmissionAccessResponse
-        {
-            SubmissionId = submission.Id!,
-            Email = accessToken.Email,
-            RequiresVerification = submission.RequiresVerification,
-            IsAuthenticated = isAuthenticated,
-            IsEmailMatch = isEmailMatch
         });
     }
 
@@ -1014,6 +1022,7 @@ public class FormSubmissionsController : ControllerBase
         SubmissionHelper.UpdateSubmissionStatus(submission);
     }
 
+    // Download pdf
     [Authorize]
     [HttpGet("{id}/pdf")]
     public async Task<IActionResult> DownloadPdf(string id)

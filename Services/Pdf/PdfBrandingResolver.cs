@@ -1,6 +1,6 @@
 ﻿using DynamicFormBuilder.Models.Pdf;
 
-namespace DynamicFormBuilder.Services
+namespace DynamicFormBuilder.Services.Pdf
 {
     public class PdfBrandingResolver : IPdfBrandingResolver
     {

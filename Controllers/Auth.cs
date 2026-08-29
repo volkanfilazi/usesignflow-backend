@@ -2,6 +2,7 @@
 using DynamicFormBuilder.Repositories.Auth;
 using DynamicFormBuilder.Repositories.Submission;
 using DynamicFormBuilder.Services;
+using DynamicFormBuilder.Services.Auth;
 using DynamicFormBuilder.Services.Billing;
 using Google.Apis.Auth;
 using Microsoft.AspNetCore.Authorization;

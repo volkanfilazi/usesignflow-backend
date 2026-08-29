@@ -1,4 +1,4 @@
-namespace DynamicFormBuilder.Services
+namespace DynamicFormBuilder.Services.Auth
 {
     using DynamicFormBuilder.Models;
     using DynamicFormBuilder.Services.Billing;
